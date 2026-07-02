@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fare Map — cheap flights, mapped</title>
+  <meta name="description" content="Pick a home airport and see the cheapest places to fly, mapped." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f6bd8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 13.5 21 4l-4.5 16-4-6.5-6.5-.5z'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-state="loading">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+             stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 13.5 21 4l-4.5 16-4-6.5-6.5-.5z" />
+        </svg>
+      </span>
+      <span class="brand-name">Fare&nbsp;Map</span>
+      <span class="brand-provider" id="providerTag">frontier</span>
+    </div>
+    <div class="topbar-meta" id="datasetMeta" aria-live="polite"></div>
+  </header>
+
+  <main class="app" id="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-scroll">
+        <div class="controls">
+          <div class="field">
+            <label class="field-label" for="originInput">Home airport</label>
+            <div class="combobox" id="combobox">
+              <input
+                id="originInput"
+                class="combobox-input"
+                type="text"
+                role="combobox"
+                aria-expanded="false"
+                aria-controls="originList"
+                aria-autocomplete="list"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Search city or code…" />
+              <button class="combobox-clear" id="originClear" type="button" aria-label="Clear origin" hidden>
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>
+              </button>
+              <ul class="combobox-list" id="originList" role="listbox" hidden></ul>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="field-label" id="metricLabel">Price in</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="metricLabel" id="metricToggle">
+              <button class="segmented-opt is-active" role="radio" aria-checked="true" data-metric="cash">Cash</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-metric="miles">Miles</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-row">
+              <span class="field-label">Travel window</span>
+              <span class="window-readout tnum" id="windowReadout"></span>
+            </div>
+            <div class="rangeslider" id="rangeSlider">
+              <div class="rangeslider-track"></div>
+              <div class="rangeslider-fill" id="rangeFill"></div>
+              <input type="range" id="rangeMin" class="rangeslider-input" min="0" max="0" value="0" step="1" aria-label="Earliest date" />
+              <input type="range" id="rangeMax" class="rangeslider-input" min="0" max="0" value="0" step="1" aria-label="Latest date" />
+            </div>
+          </div>
+        </div>
+
+        <div class="deal-summary" id="dealSummary" hidden></div>
+
+        <div class="deal-list" id="dealList" aria-label="Cheapest destinations">
+          <div class="deal-empty" id="dealEmpty">
+            <div class="deal-empty-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            </div>
+            <p class="deal-empty-title">Pick a home airport</p>
+            <p class="deal-empty-sub">We'll rank every destination by its cheapest fare and light up the map.</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="map-wrap" id="mapWrap">
+      <svg class="map" id="map" role="img" aria-label="Map of destinations and fares"></svg>
+
+      <div class="map-hint" id="mapHint">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2"/></svg>
+        <span>Pick a home airport to see where you can fly cheap.</span>
+      </div>
+
+      <div class="legend" id="legend" hidden></div>
+
+      <div class="tooltip" id="tooltip" role="status" aria-live="polite" hidden></div>
+
+      <div class="route-detail" id="routeDetail" hidden></div>
+
+      <button class="sheet-handle" id="sheetHandle" type="button" aria-label="Toggle deal list" hidden>
+        <span class="sheet-handle-bar"></span>
+      </button>
+    </section>
+  </main>
+
+  <div class="loader" id="loader" aria-hidden="true">
+    <div class="loader-dot"></div>
+    <span>Loading fares…</span>
+  </div>
+
+  <script src="vendor/d3.min.js"></script>
+  <script src="vendor/topojson-client.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
