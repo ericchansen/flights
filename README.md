@@ -188,6 +188,35 @@ projection fit to the served network. Everything after the export is
 client-side D3 — open `web/public/app.js` to see the rendering and interaction
 logic.
 
+### Deploy to Azure
+
+The app is hosted on **Azure Static Web Apps** (Free tier — global CDN, free
+TLS, no server). Infrastructure is defined as code in `infra/` (Bicep) and
+content is shipped by the GitHub Actions workflow in
+`.github/workflows/deploy-web.yml`.
+
+```powershell
+# 1. Provision the Static Web App (idempotent)
+az group create -n rg-flights-fare-map -l westus2
+az deployment group create -g rg-flights-fare-map `
+    -f infra/main.bicep -p infra/main.bicepparam
+
+# 2. Wire up CI/CD: store the deployment token as a repo secret. Thereafter,
+#    every push to main that touches web/public redeploys automatically, and
+#    each PR gets an ephemeral preview environment.
+az staticwebapp secrets list -n flights-fare-map -g rg-flights-fare-map `
+    --query "properties.apiKey" -o tsv | gh secret set AZURE_STATIC_WEB_APPS_API_TOKEN
+
+# 3. (Optional) One-off manual deploy without CI, straight from your machine
+npx -y @azure/static-web-apps-cli deploy web/public --env production `
+    --deployment-token (az staticwebapp secrets list -n flights-fare-map `
+      -g rg-flights-fare-map --query "properties.apiKey" -o tsv)
+```
+
+The app is static with no build step, so the workflow uses `skip_app_build: true`
+and just uploads `web/public`. `web/public/staticwebapp.config.json` sets the
+navigation fallback and long-lived immutable caching for the vendored libraries.
+
 ---
 
 ## Fare/flight columns
