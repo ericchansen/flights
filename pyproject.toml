@@ -3,16 +3,23 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "frontier-flights"
-version = "0.1.0"
-description = "Unofficial pure-HTTP SDK + CLI for Frontier Airlines flight availability (prices and miles)."
+name = "flights"
+version = "0.2.0"
+description = "Unofficial pure-HTTP, multi-provider SDK + CLI for airline flight availability (cash fares and miles)."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
+authors = [{ name = "Eric Hansen" }]
 dependencies = ["requests>=2.28"]
 
 [project.scripts]
-frontier-flights = "frontier_flights.cli:main"
+flights = "flights.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ericchansen/flights"
 
 [tool.setuptools]
-packages = ["frontier_flights"]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

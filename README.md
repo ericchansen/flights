@@ -1,310 +1,249 @@
-# frontier-flights
+# flights
 
-Unofficial, **pure-HTTP** Python SDK + CLI for scraping Frontier Airlines
-flight availability — cash fares **and** miles cost — with no browser and no
-login required.
+Unofficial, **pure-HTTP**, **multi-provider** Python SDK + CLI for scraping
+airline flight availability — cash fares **and** award (miles) cost — with no
+browser and no login.
 
-It talks to the same backend endpoints that `www2.flyfrontier.com` uses
-(Navitaire New Skies behind an Azure API Management gateway), reverse-engineered
-from the site's network traffic.
+Each airline is a **provider** implementing a common interface, so the same
+models, CLI, and network crawler work across carriers. The first provider is
+**Frontier Airlines** (reverse-engineered from `www2.flyfrontier.com`).
 
-> ⚠️ **Disclaimer.** This is an unofficial tool, not affiliated with or endorsed
-> by Frontier Airlines. It queries publicly reachable, unauthenticated
-> endpoints, but you are responsible for using it in line with Frontier's Terms
-> of Use and applicable law. Scrape gently (keep the built-in request delay),
-> don't hammer the API, and don't resell the data. Endpoints may change or break
-> at any time.
+> ⚠️ **Disclaimer.** Unofficial tool, not affiliated with or endorsed by any
+> airline. It queries publicly reachable, unauthenticated endpoints, but you are
+> responsible for using it within each carrier's Terms of Use and applicable
+> law. Scrape gently, don't hammer the APIs, and don't resell the data.
+> Undocumented endpoints may change or break at any time.
 
 ---
 
 ## Repository layout
 
 ```
-frontier-sdk/
-├── frontier_flights/
-│   ├── __init__.py     # public exports (FrontierClient, Airport, DayFare, Flight)
-│   ├── client.py       # core pure-HTTP client: config bootstrap, anon-token
-│   │                   #   mint/refresh, origins/destinations, lowfare_calendar,
-│   │                   #   flights (nonstop detail). All endpoint constants live here.
-│   ├── crawl.py        # Crawler: resumable, concurrent, network-wide scrape -> SQLite
-│   └── cli.py          # argparse CLI: `routes`, `lowfares`, `flights`, `crawl`
+flights/
+├── src/flights/
+│   ├── __init__.py            # top-level API: get_provider(), models, Crawler
+│   ├── cli.py                 # provider-aware CLI (routes/lowfares/flights/crawl)
+│   ├── core/                  # provider-AGNOSTIC building blocks
+│   │   ├── models.py          #   Airport, DayFare, Flight (normalized shapes)
+│   │   ├── provider.py        #   BaseProvider ABC — the interface to implement
+│   │   ├── crawl.py           #   generic resumable/concurrent SQLite crawler
+│   │   ├── registry.py        #   get_provider() / register_provider()
+│   │   └── errors.py          #   FlightsError, ProviderError, MarketNotFoundError
+│   └── providers/             # one subpackage per airline
+│       ├── __init__.py        #   registers bundled providers
+│       └── frontier/          #   FrontierProvider(BaseProvider) + endpoint logic
 ├── examples/
-│   ├── cheap_nonstop_from_den.py   # library usage demo
-│   └── explore_dataset.py          # stats + best_deals.csv export from a crawl DB
-├── README.md           # this file (full endpoint reference in "How it works")
-├── pyproject.toml      # packaging; exposes `frontier-flights` console script
-└── requirements.txt    # single dep: requests
+│   ├── cheap_nonstop_from_den.py
+│   └── explore_dataset.py     # stats + best_deals.csv from a crawl DB
+├── pyproject.toml             # src layout; console script `flights`
+├── requirements.txt           # single dep: requests
+├── LICENSE                    # MIT
+└── README.md
 ```
 
-**Where to start reading:** `client.py` defines every endpoint and the auth
-model (top-of-file constants + docstrings). `crawl.py` is the bulk scraper.
-`cli.py` wires both to the command line. There is **no hidden state** — the
-subscription key is fetched live and the anon token is minted on demand, so the
-client works from a clean checkout with no secrets or config.
-
-## Current data snapshot
-
-A completed crawl already exists in this directory (git-ignored, not committed):
-
-* **`us_lowfares.db`** — SQLite, ~144k rows across all **4,116 US->US routes**,
-  travel dates **2026-07-02 .. 2026-08-05**. See schema under
-  *Network-wide crawling* below.
-* **`best_deals.csv`** — cheapest cash fare per route (from `explore_dataset.py`).
-
-The crawl is **resumable**: re-running `crawl` with a later `--end`/`--days`
-into the same `us_lowfares.db` fills only the missing date windows. Regenerate
-stats/exports any time with `python examples/explore_dataset.py us_lowfares.db`.
+**Where to start reading:** `core/provider.py` (the interface) →
+`providers/frontier/client.py` (a concrete implementation with the full
+endpoint/auth details) → `core/crawl.py` (the generic bulk scraper). There is
+**no hidden state**: keys are fetched live and tokens minted on demand, so the
+package works from a clean checkout with no secrets or config.
 
 ---
 
 ## Install
 
 ```powershell
-cd frontier-sdk
-python -m pip install -r requirements.txt
-# optional: install as a package (provides the `frontier-flights` command)
-python -m pip install -e .
+python -m pip install -r requirements.txt      # just needs `requests`
+python -m pip install -e .                      # optional: `flights` console command
 ```
 
-Requires Python ≥ 3.9 and the `requests` library.
+Requires Python ≥ 3.9.
 
 ---
 
 ## Quick start (library)
 
 ```python
-from frontier_flights import FrontierClient
+from flights import get_provider
 
-client = FrontierClient()          # auto-fetches the API key, mints a token
+airline = get_provider("frontier")      # auto-fetches the API key, mints a token
 
-# 1. Cheapest cash + miles per day (the "low-fare calendar")
-for day in client.lowfare_calendar("DEN", "LAS", "2026-08-02", "2026-08-15"):
-    print(day.date, day.cheapest_cash, "cash |", day.total_miles, "miles")
+# 1. Cheapest cash + miles per day (the low-fare calendar)
+for day in airline.lowfare_calendar("DEN", "LAS", "2026-08-02", "2026-08-15"):
+    print(day.date, day.cheapest_cash, "cash |", day.miles, "miles")
 
-# 2. Individual NONSTOP flights on a date (with fares + miles)
-for f in client.flights("DEN", "LAS", "2026-08-05", nonstop_only=True):
+# 2. Individual NONSTOP flights on a date (fares + miles)
+for f in airline.flights("DEN", "LAS", "2026-08-05", nonstop_only=True):
     print(f"FR{f.flight_number} {f.depart_time[11:16]} "
           f"${f.cheapest_cash} / {f.miles} miles / stops={f.stops}")
 
 # 3. The route map
-for dest in client.destinations("DEN"):
+for dest in airline.destinations("DEN"):
     print("DEN ->", dest.code, dest.city)
 ```
+
+Every value is a normalized model (`Airport`, `DayFare`, `Flight`) carrying a
+`provider` field, so results from different airlines mix cleanly.
 
 ---
 
 ## Quick start (CLI)
 
 ```powershell
-# Dump the full origin->destination route map
-python -m frontier_flights.cli routes --out routes.csv
+# (all commands accept --provider, default: frontier)
+
+# Full origin->destination route map
+python -m flights.cli routes --out routes.csv
 
 # Cheapest days for specific routes, next 30 days, filter to good deals
-python -m frontier_flights.cli lowfares --routes DEN-LAS,DEN-PHX `
-    --begin 2026-08-01 --days 30 --max-price 60 --max-miles 5000 `
-    --out lowfares.csv --db frontier.db
+python -m flights.cli lowfares --routes DEN-LAS,DEN-PHX `
+    --begin 2026-08-01 --days 30 --max-price 60 --max-miles 5000 --out fares.csv
 
 # Expand one origin to ALL its destinations
-python -m frontier_flights.cli lowfares --origins DEN --days 30 --out den_all.csv
+python -m flights.cli lowfares --origins DEN --days 30 --out den_all.csv
 
 # Individual nonstop flights for chosen routes/dates
-python -m frontier_flights.cli flights --routes DEN-LAS `
+python -m flights.cli flights --routes DEN-LAS `
     --date 2026-08-05,2026-08-12 --nonstop --out flights.csv
 ```
 
-Every command writes **CSV** (`--out`) and/or **SQLite** (`--db`). With neither,
-the first 50 rows print to stdout as CSV. Rows are sorted cheapest-first.
-
-If installed as a package, replace `python -m frontier_flights.cli` with
-`frontier-flights`.
+Output goes to CSV (`--out`) and/or SQLite (`--db`); with neither, the first 50
+rows print as CSV. If installed, use the `flights` command instead of
+`python -m flights.cli`.
 
 ---
 
 ## Network-wide crawling (build a dataset)
 
-The `crawl` command scrapes low-fares across the **entire US route network**
-into a single resumable SQLite database. It:
-
-* discovers every US->US directed route (cached in the DB),
-* fetches the per-day cheapest cash + miles fares over your date range,
-* commits every 7-day window immediately (crash-safe),
-* **resumes** automatically — re-run the exact command to continue,
-* runs concurrently (default 8 workers) and skips invalid markets.
+The `crawl` command scrapes low-fares across an entire US route network into a
+resumable SQLite database. It discovers every US->US route, fetches the per-day
+cheapest cash + miles fares, commits each 7-day window immediately (crash-safe),
+**resumes** on re-run, runs concurrently (default 8 workers), and skips invalid
+markets.
 
 ```powershell
-# Full US network, next 60 days, into frontier.db  (~1.5-2 hours)
-python -m frontier_flights.cli crawl --db frontier.db --days 60 --workers 8
+# Full US network, next 30 days  (~1 hour at 8 workers, ~4,100 routes)
+python -m flights.cli crawl --db flights.db --days 30 --workers 8
 
-# Whole bookable window (today .. a fixed far date)
-python -m frontier_flights.cli crawl --db frontier.db --begin 2026-07-03 --end 2026-11-19
+# A fixed window; interrupt with Ctrl+C and re-run to resume
+python -m flights.cli crawl --db flights.db --begin 2026-07-03 --end 2026-08-31
 
-# Limit to specific origins
-python -m frontier_flights.cli crawl --db frontier.db --origins DEN,MCO,LAS --days 30
+# Limit origins
+python -m flights.cli crawl --db flights.db --origins DEN,MCO,LAS --days 30
 ```
 
-Interrupt any time with Ctrl+C — progress is saved. Re-running skips completed
-windows, so you can crawl in sessions.
-
-**Rough runtime** (8 workers, ~4,100 US routes): ~1 min per day-of-range for the
-first ~7 days, then ~1 min per additional 7-day window across the network — about
-**1 hour per 30 days** of travel dates.
-
-### The dataset (SQLite schema)
+### Dataset schema (SQLite)
 
 | table | contents |
 |---|---|
-| `lowfares` | `(origin, dest, date, standard_fare, discounted_fare, gowild_fare, total_miles, miles_taxes_fees, currency, scraped_at)` — the data |
-| `airports` | airport reference data (code, city, country, lat/long) |
-| `routes` | route map + market-validity cache (`valid=0` = no such market) |
-| `crawl_windows` | resume ledger (which 7-day windows are done) |
+| `lowfares` | `(provider, origin, destination, date, standard_fare, discounted_fare, saver_fare, miles, miles_fees, currency, scraped_at)` |
+| `airports` | airport reference data |
+| `routes` | route map + market-validity cache (`valid=0` = no such market), per provider |
+| `crawl_windows` | resume ledger (which windows are done, with the covered `window_end`) |
 | `crawl_meta` | run metadata |
 
-Explore it with any SQLite tool, pandas, or DuckDB, e.g.:
+The `provider` column means one DB can hold multiple airlines side by side.
+Column names match the `DayFare` / `Flight` model fields (e.g. `destination`),
+so the ad-hoc `lowfares` CLI export and the crawler dataset share one schema.
+The `routes` CLI export uses a separate `route_map` table so it never collides
+with the crawler's `routes` validity cache.
 
 ```sql
--- cheapest nonstop-eligible cash deals in the network
-SELECT origin, dest, date, discounted_fare, total_miles
-FROM lowfares
-WHERE discounted_fare IS NOT NULL
-ORDER BY discounted_fare
-LIMIT 25;
-
--- best award (miles) value per route
-SELECT origin, dest, MIN(total_miles) AS min_miles
-FROM lowfares WHERE total_miles IS NOT NULL
-GROUP BY origin, dest ORDER BY min_miles;
+-- cheapest cash deals network-wide
+SELECT provider, origin, destination, date,
+       MIN(COALESCE(standard_fare,1e9), COALESCE(discounted_fare,1e9), COALESCE(saver_fare,1e9)) AS fare,
+       miles
+FROM lowfares GROUP BY provider, origin, destination, date
+ORDER BY fare LIMIT 25;
 ```
 
-To confirm a shortlisted route/date is truly **nonstop** and get flight-level
-detail, follow up with the `flights --nonstop` command or `client.flights(...)`.
+Explore/export with `python examples/explore_dataset.py flights.db`.
 
 ---
 
-## Output columns
+## Fare/flight columns
 
-**`lowfares`** (one row per route per day):
+`DayFare`: `provider, origin, destination, date, standard_fare,
+discounted_fare, saver_fare, miles, miles_fees, currency` (+ `.cheapest_cash`).
 
-| column | meaning |
-|---|---|
-| `origin`, `destination` | airport codes |
-| `date` | `YYYY-MM-DD` |
-| `standard_fare` | standard economy cash fare |
-| `discounted_fare` | discount-den / promo cash fare |
-| `gowild_fare` | GoWild! pass fare (if offered that day) |
-| `total_miles` | award cost in Frontier Miles |
-| `miles_taxes_fees` | cash taxes/fees on the award |
-| `currency` | fare currency |
+`Flight`: `provider, origin, destination, date, flight_number, depart_time,
+arrive_time, aircraft, stops, flight_type, duration, standard_fare,
+discounted_fare, saver_fare, miles, currency` (+ `.is_nonstop`, `.cheapest_cash`).
 
-**`flights`** (one row per scheduled flight):
-
-| column | meaning |
-|---|---|
-| `flight_number` | e.g. `1993` (operated as `F9 1993`) |
-| `depart_time`, `arrive_time` | ISO timestamps |
-| `aircraft` | e.g. `A320`, `A321` |
-| `stops` | `0` = nonstop |
-| `flight_type` | `NonStop` / `Connecting` |
-| `total_flight_time` | `HH:MM:SS` |
-| `standard_fare`, `discounted_fare`, `gowild_fare` | cash fares |
-| `miles` | award cost in Frontier Miles |
+`saver_fare` is the lowest promotional/basic tier where a carrier offers one
+(for Frontier this is the GoWild! fare). `stops == 0` (or `flight_type`
+`NonStop`) marks a direct flight.
 
 ---
 
-## How it works (reverse-engineering notes)
+## Adding a new provider
 
-Three moving parts, all over plain HTTPS:
+1. Create `src/flights/providers/<airline>/client.py` with a class that
+   subclasses `BaseProvider` and implements the four required methods:
 
-### 1. Config — the API key is public
-`GET https://www2.flyfrontier.com/api/environment` returns a JSON blob that
-includes `BFF_SUBSCRIPTION_KEY` (the Azure APIM product key) and `BFF_ENDPOINT`.
-The key is shared by all anonymous web visitors — it is **not** tied to a user
-account. The SDK fetches it automatically (override with
-`--subscription-key` / `FrontierClient(subscription_key=...)`).
+   ```python
+   from flights.core import BaseProvider, Airport, DayFare, Flight, MarketNotFoundError
 
-### 2. Auth — an anonymous token, minted on demand
-The availability endpoints require three headers:
+   class ExampleProvider(BaseProvider):
+       name = "example"
+       lowfare_window_days = 7
 
-* `ocp-apim-subscription-key` — the key from step 1 (**required**).
-* `authtoken` — a short-lived (~15 min) anonymous **Navitaire session JWT**
-  (**required**).
-* `frontiertoken` — **must be present but is not validated**; the SDK sends a
-  random UUID.
+       def origins(self): ...
+       def destinations(self, origin): ...
+       def lowfare_window(self, origin, destination, begin, end): ...   # raise MarketNotFoundError if invalid
+       def flights(self, origin, destination, date, nonstop_only=False, adults=1): ...
+   ```
 
-The token is created with a single unauthenticated GraphQL call:
+   `lowfare_calendar`, `routes`, and `us_origins` are provided by the base class.
+   Make the provider thread-safe (lock token refresh, thread-local session) so
+   it can back the concurrent crawler.
 
-```graphql
-query RetrieveAnonymousToken {
-  uiRetrieveAnonymousTokenSetSingleton {
-    data { authToken expires organizationCode roleCode ... }
-  }
-}
-```
+2. Register it in `src/flights/providers/__init__.py`:
 
-The returned token carries `userKey: null` / `org: SYSTEM` — i.e. it is a pure
-anonymous session, unrelated to any logged-in account. The SDK mints it lazily
-and auto-refreshes before expiry.
+   ```python
+   from .example import ExampleProvider
+   register_provider("example", ExampleProvider)
+   ```
 
-### 3. Data endpoints
-
-| purpose | endpoint | type | auth |
-|---|---|---|---|
-| API config / key | `/api/environment` | REST GET | none |
-| Mint anon token | `consumerappsbff/graphql` · `RetrieveAnonymousToken` | GraphQL | key only |
-| Origin airports | `consumerappsbff/graphql` · `UiOriginAirportListSetSingleton` | GraphQL | key only |
-| Destinations for an origin | `consumerappsbff/graphql` · `GetDestination` | GraphQL | key only |
-| Per-day cheapest fares + miles | `flightavailabilityssv/NFAvailabilityLowfareSearch` | REST POST | key + token |
-| Per-flight availability (stops, times, fares, miles) | `consumerappsbff/graphql` · `UpdateAvailability` | GraphQL | key + token |
-| Per-day service/flight counts | `consumerappsbff/graphql` · `GetTripSchedule` | GraphQL | key + token |
-
-Base host for both the BFF and REST services is `https://mtier.flyfrontier.com`.
-
-**Two complementary fare sources.** The *low-fare calendar*
-(`NFAvailabilityLowfareSearch`) is cheap and bulk — it returns the single
-cheapest cash/miles figure per day for a route across a ~7-day window (the SDK
-auto-chunks longer ranges). The *availability* call (`UpdateAvailability`)
-returns every individual flight with its stop count, so it's what you use to
-confirm a route is **nonstop** and to see per-flight times and prices.
+That's it — `get_provider("example")`, `--provider example`, and
+`crawl --provider example` all work immediately.
 
 ---
 
-## Recommended scraping strategy
+## How Frontier works (reverse-engineering notes)
 
-To build a table of "cheap, direct, one-way flights" network-wide:
+All over plain HTTPS; the details live in `providers/frontier/client.py`.
 
-1. `routes` → get the route map (origins × destinations).
-2. `lowfares` over your date window with `--max-price` / `--max-miles` to
-   cheaply shortlist attractive route/date combinations.
-3. `flights --nonstop` on the shortlisted route/date pairs to confirm nonstop
-   service and capture exact flight-level fares/miles.
+**1. Config — the API key is public.** `GET
+https://www2.flyfrontier.com/api/environment` returns `BFF_SUBSCRIPTION_KEY`
+(shared Azure APIM key, not per-user) and `BFF_ENDPOINT`. Fetched automatically.
 
-Keep the default `--delay` (0.3s) or raise it for large crawls. The token
-refresh, retries, and 7-day chunking are handled for you.
+**2. Auth — an anonymous token, minted on demand.** The availability endpoints
+need three headers: `ocp-apim-subscription-key` (the key), `authtoken` (a
+short-lived ~15-min anonymous Navitaire session JWT), and `frontiertoken`
+(required but **not validated** — a random UUID). The token is created with a
+single unauthenticated GraphQL call `RetrieveAnonymousToken`
+(`userKey: null` / `org: SYSTEM` — pure anonymous session) and auto-refreshed.
 
----
+**3. Data endpoints** (base host `https://mtier.flyfrontier.com`):
 
-## Programmatic API reference
+| purpose | endpoint / op | auth |
+|---|---|---|
+| config / key | `/api/environment` | none |
+| mint token | `consumerappsbff/graphql` · `RetrieveAnonymousToken` | key only |
+| origins | `consumerappsbff/graphql` · `UiOriginAirportListSetSingleton` | key only |
+| destinations | `consumerappsbff/graphql` · `GetDestination` | key only |
+| per-day cheapest fares + miles | `flightavailabilityssv/NFAvailabilityLowfareSearch` | key + token |
+| per-flight availability (stops, times, fares, miles) | `consumerappsbff/graphql` · `UpdateAvailability` | key + token |
 
-`FrontierClient(subscription_key=None, bff_endpoint=None, currency="USD",
-request_delay=0.3, timeout=30.0, max_retries=3)`
-
-| method | returns |
-|---|---|
-| `origins()` | `list[Airport]` — all origin airports |
-| `destinations(origin)` | `list[Airport]` — destinations from an origin |
-| `routes(origins=None)` | iterator of `(origin, destination)` pairs |
-| `trip_schedule(o, d, begin_date)` | raw per-day service rows |
-| `lowfare_calendar(o, d, begin, end, fare_types=None)` | `list[DayFare]` |
-| `flights(o, d, date, nonstop_only=False, adults=1)` | `list[Flight]` |
-
-Dataclasses `Airport`, `DayFare`, and `Flight` expose convenience properties
-like `DayFare.cheapest_cash`, `Flight.is_nonstop`, and `Flight.cheapest_cash`.
+The low-fare calendar returns the single cheapest cash/miles figure per day over
+a ~7-day window (longer ranges are auto-chunked); the availability call returns
+every flight with its stop count, used to confirm **nonstop** service.
 
 ---
 
 ## Limitations
 
-* One-way, single-adult pricing by default (multi-pax counts are supported by
-  `flights(..., adults=n)`; the low-fare calendar is queried for 1 adult).
+* One-way, single-adult pricing by default (`flights(..., adults=n)` supported).
 * Fares are indicative availability prices, exclusive of most bags/seats.
-* The anonymous token and public key can be rotated or gated by Frontier at any
-  time; the endpoints are undocumented and unsupported.
+* Anonymous tokens / public keys can be rotated or gated by a carrier at any
+  time; endpoints are undocumented and unsupported.
