@@ -1,0 +1,4 @@
+# Vendored third-party libraries and generated data: keep byte-exact, no EOL
+# conversion (they are minified / machine-generated, not hand-edited source).
+web/public/vendor/** -text
+web/public/data.json -text

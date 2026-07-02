@@ -35,6 +35,9 @@ flights/
 ├── examples/
 │   ├── cheap_nonstop_from_den.py
 │   └── explore_dataset.py     # stats + best_deals.csv from a crawl DB
+├── web/                       # offline interactive fare map (see below)
+│   ├── build_data.py          #   crawl DB -> public/data.json snapshot
+│   └── public/                #   static app: index.html, styles.css, app.js
 ├── pyproject.toml             # src layout; console script `flights`
 ├── requirements.txt           # single dep: requests
 ├── LICENSE                    # MIT
@@ -157,6 +160,33 @@ ORDER BY fare LIMIT 25;
 ```
 
 Explore/export with `python examples/explore_dataset.py flights.db`.
+
+---
+
+## Interactive fare map (`web/`)
+
+A fully offline, static web app for exploring a crawl database on a map. Pick a
+home airport and the U.S. map fans out flight-path arcs to every reachable
+destination, colored and ranked cheapest-first (cash **or** award miles), with a
+travel-window slider and a per-route day-by-day fare breakdown. No server-side
+code, no API keys, no tiles — it reads a single exported JSON snapshot.
+
+```powershell
+# 1. Export a crawl DB to the app's data snapshot (web/public/data.json)
+python web/build_data.py D:\flights-data\us_lowfares.db
+
+# 2. Serve the static app (any static server works)
+python -m http.server 8777 --directory web/public
+
+# 3. Open http://127.0.0.1:8777/
+```
+
+`build_data.py` parses the airport DMS coordinates, aggregates the cheapest cash
+and miles per market and per date, and emits only airports that actually appear
+in a priced route. The dataset is U.S.-domestic, so the map uses a `geoAlbers`
+projection fit to the served network. Everything after the export is
+client-side D3 — open `web/public/app.js` to see the rendering and interaction
+logic.
 
 ---
 

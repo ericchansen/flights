@@ -8,3 +8,6 @@ dist/
 *.db
 *.log
 .venv/
+
+# impeccable design-skill local hook cache (machine-specific)
+.impeccable/
