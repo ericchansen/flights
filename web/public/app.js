@@ -244,15 +244,26 @@
     projection = d3.geoAlbers().rotate([94, 0]).center([0, 36]).parallels([15, 42]);
     geoPath = d3.geoPath(projection);
 
-    // basemap geometry
+    // basemap geometry. The contiguous US is drawn from the states topology as a
+    // merged landmass (below) so it gets a real fill + coastline; the world layer
+    // supplies only the neighboring context (Canada, Mexico, ...), so we exclude
+    // the US (id 840) from it to avoid drawing it twice.
     const countries = topojson.feature(world, world.objects.countries).features
       .filter((f) => {
+        if (f.id === "840") return false; // US comes from us.objects.states
         const [[x0, y0], [x1, y1]] = d3.geoBounds(f);
         return x1 >= -125 && x0 <= -58 && y1 >= 7 && y0 <= 50;
       });
+    // Contiguous US only: drop Alaska, Hawaii, and the island territories, which a
+    // CONUS Albers projection would otherwise fling into the corners.
+    const nonConus = new Set(["02", "15", "60", "66", "69", "72", "78"]);
+    const nation = topojson.merge(
+      us,
+      us.objects.states.geometries.filter((g) => !nonConus.has(g.id))
+    );
     const statesMesh = topojson.mesh(us, us.objects.states, (a, b) => a !== b);
 
-    state.geo = { countries, statesMesh };
+    state.geo = { countries, nation, statesMesh };
 
     zoom = d3.zoom().scaleExtent([1, 9]).on("zoom", (ev) => {
       currentK = ev.transform.k;
@@ -291,6 +302,9 @@
     const land = el.gLand.selectAll("path.geo-land").data(state.geo.countries);
     land.join("path").attr("class", "geo-land").attr("d", geoPath);
 
+    const nation = el.gLand.selectAll("path.geo-nation").data([state.geo.nation]);
+    nation.join("path").attr("class", "geo-nation").attr("d", geoPath);
+
     let sm = el.gLand.selectAll("path.geo-state").data([state.geo.statesMesh]);
     sm.join("path").attr("class", "geo-state").attr("d", geoPath);
   }
@@ -298,7 +312,8 @@
   // counter-scale marks so they stay crisp when zoomed
   function rescale() {
     const k = currentK;
-    el.gLand.selectAll(".geo-land").attr("stroke-width", 0.6 / k);
+    el.gLand.selectAll(".geo-land").attr("stroke-width", 0.8 / k);
+    el.gLand.selectAll(".geo-nation").attr("stroke-width", 0.8 / k);
     el.gLand.selectAll(".geo-state").attr("stroke-width", 0.5 / k);
     el.gNodes.selectAll(".node").attr("r", (d) => nodeRadius(d) / k);
     el.gNodes.selectAll(".node-origin-ring").attr("r", 9 / k).attr("stroke-width", 2 / k);
