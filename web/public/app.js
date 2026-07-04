@@ -32,6 +32,14 @@
     color: null,
     deals: [],
     dealByCode: {},
+    // Phase 2 — trip planner
+    routesByPair: {},
+    mode: "explore", // 'explore' | 'plan'
+    plan: { maxStops: 1, minStay: 1, tripMin: 4, tripMax: 9, budget: null },
+    budgetMax: 0,
+    trips: [],
+    planTruncated: false,
+    selectedTrip: null,
   };
 
   const el = {
@@ -60,6 +68,19 @@
     rangeFill: $("#rangeFill"),
     windowReadout: $("#windowReadout"),
     sheetHandle: $("#sheetHandle"),
+    // Phase 2 — trip planner
+    modeToggle: $("#modeToggle"),
+    shapeToggle: $("#shapeToggle"),
+    nightsToggle: $("#nightsToggle"),
+    lengthMin: $("#lengthMin"),
+    lengthMax: $("#lengthMax"),
+    lengthFill: $("#lengthFill"),
+    lengthReadout: $("#lengthReadout"),
+    budgetInput: $("#budgetInput"),
+    budgetFill: $("#budgetFill"),
+    budgetReadout: $("#budgetReadout"),
+    planSummary: $("#planSummary"),
+    tripList: $("#tripList"),
   };
 
   let projection, geoPath, zoom, dims = { w: 0, h: 0 }, currentK = 1;
@@ -137,6 +158,7 @@
     data.airports.forEach((a) => { state.airports[a.code] = a; });
     data.routes.forEach((r) => {
       (state.routesByOrigin[r.o] || (state.routesByOrigin[r.o] = [])).push(r);
+      (state.routesByPair[r.o] || (state.routesByPair[r.o] = {}))[r.d] = r;
     });
     state.origins = Object.keys(state.routesByOrigin)
       .map((code) => state.airports[code])
@@ -159,6 +181,7 @@
     setupSvg(world, us);
     setupControls();
     renderLegend();
+    el.body.dataset.mode = state.mode;
 
     // Auto-select a sensible hub so the map is useful immediately.
     const defaultOrigin =
@@ -177,6 +200,10 @@
       if (r.miles != null) miles.push(r.miles);
     });
     cash.sort(d3.ascending); miles.sort(d3.ascending);
+    state.priceExtent = {
+      cash: cash.length ? cash[cash.length - 1] : 0,
+      miles: miles.length ? miles[miles.length - 1] : 0,
+    };
     const robust = (arr, q) => d3.quantileSorted(arr, q);
     state.scales = {
       cash: {
@@ -248,8 +275,15 @@
     geoPath = d3.geoPath(projection);
 
     drawBasemap();
-    if (state.origin) drawScene(false);
-    drawNodes();
+    if (state.mode === "plan") {
+      drawNodes();
+      if (state.selectedTrip != null && state.trips[state.selectedTrip]) {
+        drawTripScene(state.trips[state.selectedTrip]);
+      }
+    } else {
+      if (state.origin) drawScene(false);
+      drawNodes();
+    }
     rescale();
   }
 
@@ -271,6 +305,10 @@
     el.gNodes.selectAll(".node-hit").attr("r", 11 / k);
     el.gLabels.selectAll("text").attr("font-size", (10.5 / k) + "px").attr("stroke-width", 3 / k);
     el.gArcs.selectAll(".arc").attr("stroke-width", (d) => arcWidth(d) / k);
+    el.gArcs.selectAll(".trip-arc").attr("stroke-width", 2 / k);
+    el.gNodes.selectAll(".trip-city").attr("r", 4 / k);
+    el.gLabels.selectAll(".trip-city-label").attr("font-size", (11 / k) + "px").attr("stroke-width", 3 / k);
+    el.gLabels.selectAll(".trip-seq").attr("font-size", (9 / k) + "px").attr("stroke-width", 2.5 / k);
   }
 
   /* ----------------------------------------------------------------- nodes */
@@ -610,7 +648,14 @@
     el.originClear.hidden = false;
     el.body.dataset.hasOrigin = "true";
     hideTooltip();
-    drawScene(true);
+    if (state.mode === "plan") {
+      Object.values(state.airports).forEach((x) => { x._deal = null; });
+      el.gArcs.selectAll(".arc").remove();
+      drawNodes();
+      runPlanSearch();
+    } else {
+      drawScene(true);
+    }
   }
 
   // Fully reset origin selection: state, map arcs/nodes, and body flag — not
@@ -623,7 +668,17 @@
     el.originClear.hidden = true;
     delete el.body.dataset.hasOrigin;
     hideTooltip();
-    drawScene(false);
+    if (state.mode === "plan") {
+      state.trips = [];
+      state.selectedTrip = null;
+      clearTripLayers();
+      Object.values(state.airports).forEach((x) => { x._deal = null; });
+      drawNodes();
+      renderTripList();
+      renderPlanSummary();
+    } else {
+      drawScene(false);
+    }
   }
 
   /* -------------------------------------------------------------- controls */
@@ -640,8 +695,13 @@
           b.setAttribute("aria-checked", on ? "true" : "false");
         });
         renderLegend();
-        if (state.origin) drawScene(false);
-        if (state.selected) renderRouteDetail(state.selected);
+        computeBudgetBounds();
+        if (state.mode === "plan") {
+          runPlanSearch();
+        } else {
+          if (state.origin) drawScene(false);
+          if (state.selected) renderRouteDetail(state.selected);
+        }
       });
     });
 
@@ -655,6 +715,7 @@
           b.classList.toggle("is-active", on);
           b.setAttribute("aria-checked", on ? "true" : "false");
         });
+        if (state.mode === "plan") { runPlanSearch(); return; }
         if (state.origin) drawScene(false);
         // A selected route may no longer be in the filtered set.
         if (state.selected && !state.dealByCode[state.selected]) setSelected(null);
@@ -672,12 +733,15 @@
       el.rangeMin.value = a; el.rangeMax.value = b;
       state.range = [a, b];
       updateRangeUI();
+      if (state.mode === "plan") { schedulePlanSearch(); return; }
       if (state.origin) drawScene(false);
       if (state.selected) renderRouteDetail(state.selected);
     };
     el.rangeMin.addEventListener("input", onRange);
     el.rangeMax.addEventListener("input", onRange);
     updateRangeUI();
+
+    setupPlanControls();
 
     // mobile sheet
     el.sheetHandle.hidden = false;
@@ -696,6 +760,304 @@
     el.rangeFill.style.left = (a / n) * 100 + "%";
     el.rangeFill.style.right = (1 - b / n) * 100 + "%";
     el.windowReadout.textContent = `${fmtDate(state.dates[a])} – ${fmtDate(state.dates[b])}`;
+  }
+
+  /* ============================================================================
+     Plan a trip — mode switch, controls, search, cards, and map path
+     ========================================================================== */
+  let planTimer = null;
+
+  function setSegActive(container, btn) {
+    container.querySelectorAll(".segmented-opt").forEach((b) => {
+      const on = b === btn;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-checked", on ? "true" : "false");
+    });
+  }
+
+  function setupPlanControls() {
+    el.modeToggle.querySelectorAll(".segmented-opt").forEach((btn) => {
+      btn.addEventListener("click", () => setMode(btn.dataset.mode));
+    });
+
+    el.shapeToggle.querySelectorAll(".segmented-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const v = +btn.dataset.maxstops;
+        if (state.plan.maxStops === v) return;
+        state.plan.maxStops = v;
+        setSegActive(el.shapeToggle, btn);
+        schedulePlanSearch();
+      });
+    });
+
+    el.nightsToggle.querySelectorAll(".segmented-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const v = +btn.dataset.nights;
+        if (state.plan.minStay === v) return;
+        state.plan.minStay = v;
+        setSegActive(el.nightsToggle, btn);
+        schedulePlanSearch();
+      });
+    });
+
+    const onLength = () => {
+      let a = +el.lengthMin.value, b = +el.lengthMax.value;
+      if (a > b) { if (document.activeElement === el.lengthMin) b = a; else a = b; }
+      el.lengthMin.value = a; el.lengthMax.value = b;
+      state.plan.tripMin = a; state.plan.tripMax = b;
+      updateLengthUI();
+      schedulePlanSearch();
+    };
+    el.lengthMin.addEventListener("input", onLength);
+    el.lengthMax.addEventListener("input", onLength);
+    el.budgetInput.addEventListener("input", onBudget);
+
+    computeBudgetBounds();
+    updateLengthUI();
+  }
+
+  function updateLengthUI() {
+    const LMIN = +el.lengthMin.min, LMAX = +el.lengthMin.max, span = (LMAX - LMIN) || 1;
+    const a = state.plan.tripMin, b = state.plan.tripMax;
+    el.lengthFill.style.left = ((a - LMIN) / span) * 100 + "%";
+    el.lengthFill.style.right = (1 - (b - LMIN) / span) * 100 + "%";
+    el.lengthReadout.textContent = a === b ? `${a} days` : `${a}–${b} days`;
+  }
+
+  // Budget slider is metric-aware: its range and step change with cash vs miles,
+  // and flipping metric resets it to "Any" to avoid comparing dollars to miles.
+  function computeBudgetBounds() {
+    const isCash = state.metric === "cash";
+    const maxSingle = (state.priceExtent && (isCash ? state.priceExtent.cash : state.priceExtent.miles)) || 0;
+    const step = isCash ? 10 : 1000;
+    let max = Math.ceil((maxSingle * 2) / step) * step;
+    if (!isFinite(max) || max <= 0) max = isCash ? 1000 : 100000;
+    state.budgetMax = max;
+    el.budgetInput.min = "0";
+    el.budgetInput.max = String(max);
+    el.budgetInput.step = String(step);
+    state.plan.budget = null;
+    el.budgetInput.value = String(max);
+    updateBudgetUI();
+  }
+
+  function updateBudgetUI() {
+    const max = state.budgetMax || 1;
+    const v = +el.budgetInput.value;
+    el.budgetFill.style.right = (1 - v / max) * 100 + "%";
+    el.budgetReadout.textContent = state.plan.budget == null
+      ? "Any"
+      : (state.metric === "cash" ? fmtMoneyRound(state.plan.budget) : fmtMiles(state.plan.budget));
+  }
+
+  function onBudget() {
+    const max = state.budgetMax || 1;
+    const v = +el.budgetInput.value;
+    state.plan.budget = (v >= max) ? null : v; // top of the track means "no cap"
+    updateBudgetUI();
+    schedulePlanSearch();
+  }
+
+  function setMode(mode) {
+    if (state.mode === mode || (mode !== "plan" && mode !== "explore")) return;
+    state.mode = mode;
+    el.body.dataset.mode = mode;
+    setSegActive(el.modeToggle, [...el.modeToggle.querySelectorAll(".segmented-opt")]
+      .find((b) => b.dataset.mode === mode));
+    hideTooltip();
+
+    if (mode === "plan") {
+      if (state.selected) setSelected(null);
+      el.gArcs.selectAll(".arc").remove();
+      Object.values(state.airports).forEach((a) => { a._deal = null; });
+      el.dealSummary.hidden = true;
+      el.dealList.hidden = true;
+      el.tripList.hidden = false;
+      drawNodes();
+      runPlanSearch();
+    } else {
+      state.selectedTrip = null;
+      clearTripLayers();
+      el.planSummary.hidden = true;
+      el.tripList.hidden = true;
+      el.dealList.hidden = false;
+      if (state.origin) drawScene(false);
+      else { drawNodes(); renderDealList(); renderSummary(); }
+    }
+  }
+
+  function schedulePlanSearch() {
+    if (state.mode !== "plan") return;
+    clearTimeout(planTimer);
+    planTimer = setTimeout(runPlanSearch, 130);
+  }
+
+  function runPlanSearch() {
+    if (state.mode !== "plan") return;
+    if (!state.origin) {
+      state.trips = []; state.selectedTrip = null;
+      renderTripList(); renderPlanSummary(); clearTripLayers();
+      return;
+    }
+    if (!window.Trips) { console.error("trips.js not loaded"); return; }
+    const params = {
+      home: state.origin,
+      metric: state.metric,
+      maxStops: state.plan.maxStops,
+      minStay: state.plan.minStay,
+      minTrip: state.plan.tripMin,
+      maxTrip: state.plan.tripMax,
+      budget: state.plan.budget == null ? undefined : state.plan.budget,
+      nonstopOnly: state.nonstopOnly,
+      rangeStart: state.range[0],
+      rangeEnd: state.range[1],
+      limit: 60,
+    };
+    const res = window.Trips.findTrips(
+      { routesByPair: state.routesByPair, dates: state.dates }, params);
+    state.trips = res.trips;
+    state.planTruncated = res.truncated;
+    state.selectedTrip = state.trips.length ? 0 : null;
+    renderTripList();
+    renderPlanSummary();
+    drawTripScene(state.trips.length ? state.trips[0] : null);
+  }
+
+  function shapeLabel() {
+    return state.plan.maxStops <= 1 ? "round-trips"
+      : state.plan.maxStops === 2 ? "up to +1 city" : "up to +2 cities";
+  }
+
+  function renderPlanSummary() {
+    if (!state.origin || !state.trips.length) { el.planSummary.hidden = true; return; }
+    const origin = state.airports[state.origin];
+    const sc = state.scales[state.metric];
+    const cheapest = state.trips[0];
+    el.planSummary.hidden = false;
+    el.planSummary.innerHTML =
+      `<strong>${state.trips.length}${state.planTruncated ? "+" : ""}</strong> ` +
+      `${state.trips.length === 1 ? "trip" : "trips"} from ` +
+      `${escapeHtml(origin.city)} · cheapest ` +
+      `<span class="price-pop tnum">${sc.fmtRound(cheapest.total)}</span> · ${shapeLabel()}`;
+  }
+
+  function tripEmptyHtml(title, sub) {
+    return `<div class="deal-empty">` +
+      `<div class="deal-empty-mark" aria-hidden="true">` +
+      `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2"/></svg>` +
+      `</div>` +
+      `<p class="deal-empty-title">${title}</p>` +
+      `<p class="deal-empty-sub">${sub}</p></div>`;
+  }
+
+  function renderTripList() {
+    const list = el.tripList;
+    list.innerHTML = "";
+    if (!state.origin) {
+      list.innerHTML = tripEmptyHtml("Pick a home airport",
+        "We'll build cheap round-trips and multi-city vacations from home and rank them by total price.");
+      return;
+    }
+    if (!state.trips.length) {
+      list.innerHTML = tripEmptyHtml("No trips fit those filters",
+        "Try a bigger budget, a wider travel window, more stops, or fewer nights per stop.");
+      return;
+    }
+
+    const head = document.createElement("div");
+    head.className = "deal-list-head";
+    head.innerHTML = `<span></span><span>Trip</span><span>${state.metric === "cash" ? "Total" : "Miles"}</span>`;
+    list.appendChild(head);
+
+    const sc = state.scales[state.metric];
+    const frag = document.createDocumentFragment();
+    state.trips.forEach((trip, i) => {
+      const codes = [trip.home].concat(trip.cities).concat([trip.home]);
+      const routeHtml = codes
+        .map((c, idx) => (idx ? `<span class="trip-hop">→</span>` : "") + `<span>${escapeHtml(c)}</span>`)
+        .join("");
+      const out = fmtDate(trip.legs[0].date);
+      const back = fmtDate(trip.legs[trip.legs.length - 1].date);
+      const cityWord = trip.cities.length === 1 ? "1 city" : `${trip.cities.length} cities`;
+      const badge = trip.nonstop ? `<span class="trip-badge">NONSTOP</span>` : "";
+      const btn = document.createElement("button");
+      btn.className = "trip-card" + (i === state.selectedTrip ? " is-selected" : "");
+      btn.type = "button";
+      btn.dataset.idx = i;
+      btn.setAttribute("aria-label",
+        `Trip ${i + 1}: ${codes.join(" to ")}, ${sc.fmtExact(trip.total)} total, ` +
+        `${trip.days} days, ${out} to ${back}`);
+      btn.innerHTML =
+        `<span class="trip-rank tnum">${i + 1}</span>` +
+        `<span class="trip-route">${routeHtml}</span>` +
+        `<span class="trip-price">` +
+          `<span class="trip-total tnum">${sc.fmtRound(trip.total)}</span>` +
+          `<span class="trip-perday tnum">${sc.fmtRound(trip.pricePerDay)}/day</span>` +
+        `</span>` +
+        `<span class="trip-meta">${trip.days} days · ${cityWord} · ${out}–${back}` +
+          `${badge ? " · " + badge : ""}</span>`;
+      btn.addEventListener("click", () => selectTrip(i));
+      frag.appendChild(btn);
+    });
+    list.appendChild(frag);
+  }
+
+  function selectTrip(i) {
+    if (!state.trips[i]) return;
+    state.selectedTrip = i;
+    document.querySelectorAll(".trip-card").forEach((c) => {
+      c.classList.toggle("is-selected", +c.dataset.idx === i);
+    });
+    const card = document.querySelector(`.trip-card[data-idx="${i}"]`);
+    if (card) card.scrollIntoView({ block: "nearest", behavior: REDUCED_MOTION ? "auto" : "smooth" });
+    drawTripScene(state.trips[i]);
+  }
+
+  function clearTripLayers() {
+    el.gArcs.selectAll(".trip-arc").remove();
+    el.gNodes.selectAll(".trip-city").remove();
+    el.gLabels.selectAll(".trip-seq, .trip-city-label").remove();
+  }
+
+  function drawTripScene(trip) {
+    clearTripLayers();
+    if (!trip) return;
+
+    const legPaths = trip.legs
+      .map((l) => ({ o: state.airports[l.o], d: state.airports[l.d] }))
+      .filter((x) => x.o && x.d && pt(x.o) && pt(x.d));
+    el.gArcs.selectAll(".trip-arc").data(legPaths).join("path")
+      .attr("class", "trip-arc")
+      .attr("d", (x) => geoPath(arcData(x.o, x.d)))
+      .attr("stroke-width", 2 / currentK)
+      .attr("stroke-opacity", 0.9);
+
+    const cityCodes = [trip.home].concat(trip.cities);
+    const cityPts = cityCodes.map((c) => state.airports[c]).filter((a) => a && pt(a));
+    el.gNodes.selectAll(".trip-city").data(cityPts, (d) => d.code).join("circle")
+      .attr("class", "trip-city")
+      .attr("cx", (d) => pt(d)[0]).attr("cy", (d) => pt(d)[1])
+      .attr("r", 4 / currentK);
+
+    el.gLabels.selectAll(".trip-city-label").data(cityPts, (d) => d.code).join("text")
+      .attr("class", "trip-city-label")
+      .attr("x", (d) => pt(d)[0]).attr("y", (d) => pt(d)[1] - 9 / currentK)
+      .attr("text-anchor", "middle")
+      .attr("font-size", (11 / currentK) + "px").attr("stroke-width", 3 / currentK)
+      .text((d) => d.code);
+
+    // Order badges only help when there is more than one intermediate city.
+    if (trip.cities.length >= 2) {
+      const seqData = cityCodes
+        .map((c, i) => ({ a: state.airports[c], n: i + 1 }))
+        .filter((x) => x.a && pt(x.a));
+      el.gLabels.selectAll(".trip-seq").data(seqData, (d) => d.a.code).join("text")
+        .attr("class", "trip-seq")
+        .attr("x", (d) => pt(d.a)[0]).attr("y", (d) => pt(d.a)[1] + 14 / currentK)
+        .attr("text-anchor", "middle")
+        .attr("font-size", (9 / currentK) + "px").attr("stroke-width", 2.5 / currentK)
+        .text((d) => d.n);
+    }
   }
 
   /* ------------------------------------------------------------- combobox  */
