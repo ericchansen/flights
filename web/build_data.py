@@ -87,7 +87,7 @@ def main() -> None:
 
     cheapest_expr = (
         "MIN(COALESCE(standard_fare,1e9),COALESCE(discounted_fare,1e9),"
-        "COALESCE(gowild_fare,1e9))"
+        "COALESCE(saver_fare,1e9))"
     )
 
     # --- airports (parse coords) -------------------------------------------
@@ -109,13 +109,25 @@ def main() -> None:
             "lon": dlon,
         }
 
+    # --- per-market nonstop flag (from the crawler's routes table) ---------
+    # 1 = market offers nonstop service, 0 = connecting-only, absent = unknown
+    # (older DB, or a market the nonstop probe never resolved).
+    nonstop_by_pair: dict[tuple[str, str], int] = {}
+    if _table_exists(q, "routes"):
+        route_cols = {r[1] for r in q("PRAGMA table_info(routes)").fetchall()}
+        if "nonstop" in route_cols:
+            for o, d, ns in q(
+                "SELECT origin, destination, nonstop FROM routes WHERE nonstop IS NOT NULL"
+            ).fetchall():
+                nonstop_by_pair[(o, d)] = int(ns)
+
     # --- routes: per (origin,dest,date) cheapest cash + miles --------------
     routes: dict[tuple[str, str], dict] = {}
     rows = q(
-        f"SELECT origin, dest, date, {cheapest_expr} AS cash, "
-        f"MIN(CASE WHEN total_miles>0 THEN total_miles END) AS miles, "
-        f"MIN(miles_taxes_fees) AS fees "
-        f"FROM lowfares GROUP BY origin, dest, date"
+        f"SELECT origin, destination, date, {cheapest_expr} AS cash, "
+        f"MIN(CASE WHEN miles>0 THEN miles END) AS miles, "
+        f"MIN(miles_fees) AS fees "
+        f"FROM lowfares GROUP BY origin, destination, date"
     ).fetchall()
 
     for origin, dest, date, cash, miles, fees in rows:
@@ -133,6 +145,7 @@ def main() -> None:
                 "cashByDate": [None] * n_dates,
                 "milesByDate": [None] * n_dates,
                 "fees": None,
+                "nonstop": nonstop_by_pair.get(key),
             }
         if cash is not None and cash < 1e9:
             r["cashByDate"][di] = round(cash, 2)
@@ -185,6 +198,7 @@ def main() -> None:
         "n_airports": len(airports),
         "n_routes": len(route_list),
         "n_origins": len({r["o"] for r in route_list}),
+        "n_nonstop": sum(1 for r in route_list if r.get("nonstop") == 1),
     }
 
     payload = {
@@ -201,7 +215,7 @@ def main() -> None:
     print(f"Wrote {args.out}  ({size_kb:,.0f} KB)")
     print(
         f"  airports={meta['n_airports']}  routes={meta['n_routes']}  "
-        f"origins={meta['n_origins']}  dates={n_dates} "
+        f"origins={meta['n_origins']}  nonstop={meta['n_nonstop']}  dates={n_dates} "
         f"({meta['date_min']}..{meta['date_max']})"
     )
     print(

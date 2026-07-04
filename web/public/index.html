@@ -57,6 +57,14 @@
           </div>
 
           <div class="field">
+            <span class="field-label" id="stopsLabel">Stops</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="stopsLabel" id="stopsToggle">
+              <button class="segmented-opt is-active" role="radio" aria-checked="true" data-stops="any">All</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-stops="nonstop">Nonstop</button>
+            </div>
+          </div>
+
+          <div class="field">
             <div class="field-row">
               <span class="field-label">Travel window</span>
               <span class="window-readout tnum" id="windowReadout"></span>

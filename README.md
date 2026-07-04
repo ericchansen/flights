@@ -104,10 +104,20 @@ python -m flights.cli lowfares --routes DEN-LAS,DEN-PHX `
 # Expand one origin to ALL its destinations
 python -m flights.cli lowfares --origins DEN --days 30 --out den_all.csv
 
+# Only markets that offer nonstop ("continuous") service
+python -m flights.cli lowfares --origins DEN --days 30 --nonstop --out den_nonstop.csv
+
 # Individual nonstop flights for chosen routes/dates
 python -m flights.cli flights --routes DEN-LAS `
     --date 2026-08-05,2026-08-12 --nonstop --out flights.csv
 ```
+
+> **Two kinds of "nonstop".** `flights --nonstop` returns the exact nonstop
+> flights (with times) for a specific route/date. `lowfares --nonstop` is a
+> coarser *market* filter: it keeps a route only if the carrier flies it nonstop
+> on any sampled date, then reports that route's cheapest per-day calendar fares
+> (which may themselves be sold as a connection). The same market-level signal
+> powers the map's **Nonstop** toggle.
 
 Output goes to CSV (`--out`) and/or SQLite (`--db`); with neither, the first 50
 rows print as CSV. If installed, use the `flights` command instead of
@@ -121,7 +131,10 @@ The `crawl` command scrapes low-fares across an entire US route network into a
 resumable SQLite database. It discovers every US->US route, fetches the per-day
 cheapest cash + miles fares, commits each 7-day window immediately (crash-safe),
 **resumes** on re-run, runs concurrently (default 8 workers), and skips invalid
-markets.
+markets. After the fare pass it runs a lightweight **nonstop probe** — one
+availability lookup on a couple of sampled dates per market — to record whether
+each route offers nonstop service (`routes.nonstop`). Pass
+`--skip-nonstop-probe` to omit it.
 
 ```powershell
 # Full US network, next 30 days  (~1 hour at 8 workers, ~4,100 routes)
@@ -132,6 +145,9 @@ python -m flights.cli crawl --db flights.db --begin 2026-07-03 --end 2026-08-31
 
 # Limit origins
 python -m flights.cli crawl --db flights.db --origins DEN,MCO,LAS --days 30
+
+# Skip the per-market nonstop-service probe (faster, no nonstop data)
+python -m flights.cli crawl --db flights.db --days 30 --skip-nonstop-probe
 ```
 
 ### Dataset schema (SQLite)
@@ -140,7 +156,7 @@ python -m flights.cli crawl --db flights.db --origins DEN,MCO,LAS --days 30
 |---|---|
 | `lowfares` | `(provider, origin, destination, date, standard_fare, discounted_fare, saver_fare, miles, miles_fees, currency, scraped_at)` |
 | `airports` | airport reference data |
-| `routes` | route map + market-validity cache (`valid=0` = no such market), per provider |
+| `routes` | route map + market-validity cache (`valid=0` = no such market) + `nonstop` (1 = nonstop service exists, 0 = connecting only, NULL = not yet probed), per provider |
 | `crawl_windows` | resume ledger (which windows are done, with the covered `window_end`) |
 | `crawl_meta` | run metadata |
 
@@ -168,8 +184,10 @@ Explore/export with `python examples/explore_dataset.py flights.db`.
 A fully offline, static web app for exploring a crawl database on a map. Pick a
 home airport and the U.S. map fans out flight-path arcs to every reachable
 destination, colored and ranked cheapest-first (cash **or** award miles), with a
-travel-window slider and a per-route day-by-day fare breakdown. No server-side
-code, no API keys, no tiles — it reads a single exported JSON snapshot.
+travel-window slider, a **Nonstop** toggle (limits the map to routes with nonstop
+service, from `routes.nonstop`), and a per-route day-by-day fare breakdown. No
+server-side code, no API keys, no tiles — it reads a single exported JSON
+snapshot.
 
 ```powershell
 # 1. Export a crawl DB to the app's data snapshot (web/public/data.json)
