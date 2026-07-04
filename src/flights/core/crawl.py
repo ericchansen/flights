@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS airports (
 );
 CREATE TABLE IF NOT EXISTS routes (
     provider TEXT, origin TEXT, destination TEXT, valid INTEGER, last_checked TEXT,
+    nonstop INTEGER,
     PRIMARY KEY (provider, origin, destination)
 );
 CREATE TABLE IF NOT EXISTS lowfares (
@@ -61,12 +62,21 @@ class Crawler:
         self._db_lock = threading.Lock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
 
         self.stat_rows = 0
         self.stat_windows = 0
         self.stat_nomarket = 0
         self.stat_errors = 0
+        self.stat_nonstop_yes = 0
+        self.stat_nonstop_no = 0
+
+    def _migrate(self) -> None:
+        """Bring an older DB up to the current schema (additive only)."""
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(routes)").fetchall()}
+        if "nonstop" not in cols:
+            self._conn.execute("ALTER TABLE routes ADD COLUMN nonstop INTEGER")
 
     # ------------------------------------------------------------------ #
     # reference data                                                     #
@@ -136,6 +146,111 @@ class Crawler:
             ).fetchall()
         return set(rows)
 
+    def _probed_markets(self) -> set[tuple[str, str]]:
+        """Markets whose nonstop status is already known (skip on resume)."""
+        with self._db_lock:
+            rows = self._conn.execute(
+                "SELECT origin, destination FROM routes "
+                "WHERE provider=? AND nonstop IS NOT NULL",
+                (self.provider.name,),
+            ).fetchall()
+        return set(rows)
+
+    # ------------------------------------------------------------------ #
+    # nonstop probe                                                      #
+    # ------------------------------------------------------------------ #
+
+    def _sample_dates(self, begin: _dt.date, end: _dt.date) -> list[str]:
+        """1-2 representative dates in the range to probe for nonstop service."""
+        span = (end - begin).days
+        if span <= 0:
+            return [begin.isoformat()]
+        mid = begin + _dt.timedelta(days=span // 2)
+        return [d.isoformat() for d in sorted({begin, mid})]
+
+    def _probe_one(self, origin: str, dest: str, sample_dates: list[str]):
+        """Return 1 if any nonstop trip exists, 0 if trips exist but none are
+        nonstop, or None if service could not be determined (no trips / errors).
+
+        Uses ``flights(nonstop_only=False)`` so we can distinguish
+        "connecting-only" (0) from "no service on the sampled day" (unknown).
+        """
+        result = None
+        for date in sample_dates:
+            try:
+                trips = self.provider.flights(origin, dest, date, nonstop_only=False)
+            except MarketNotFoundError:
+                return None
+            except Exception:  # noqa: BLE001 - keep the probe alive
+                continue
+            if trips:
+                if any(t.is_nonstop for t in trips):
+                    return 1
+                result = 0
+        return result
+
+    def _store_nonstop(self, origin: str, dest: str, nonstop) -> None:
+        if nonstop is None:
+            return  # leave NULL (unknown) so a later run re-probes it
+        now = _dt.datetime.utcnow().isoformat()
+        prov = self.provider.name
+        with self._db_lock:
+            self._conn.execute(
+                "INSERT INTO routes (provider,origin,destination,valid,last_checked,nonstop) "
+                "VALUES (?,?,?,NULL,?,?) "
+                "ON CONFLICT(provider,origin,destination) "
+                "DO UPDATE SET nonstop=excluded.nonstop, last_checked=excluded.last_checked",
+                (prov, origin, dest, now, nonstop),
+            )
+            self._conn.commit()
+        if nonstop:
+            self.stat_nonstop_yes += 1
+        else:
+            self.stat_nonstop_no += 1
+
+    def _probe_pass(self, pairs: list[tuple[str, str]], begin: _dt.date, end: _dt.date) -> None:
+        """Populate ``routes.nonstop`` for every valid, not-yet-probed market."""
+        invalid = self._invalid_markets()
+        probed = self._probed_markets()
+        todo = [(o, d) for (o, d) in pairs if (o, d) not in invalid and (o, d) not in probed]
+        if not todo:
+            print("\nNonstop probe: nothing to do (all markets already probed).", flush=True)
+            return
+        sample_dates = self._sample_dates(begin, end)
+        total = len(todo)
+        print(
+            f"\nProbing nonstop service for {total} market(s) on "
+            f"{len(sample_dates)} sample date(s) ({', '.join(sample_dates)})...",
+            flush=True,
+        )
+        start = time.time()
+        completed = 0
+        with ThreadPoolExecutor(max_workers=self.workers) as ex:
+            futures = {
+                ex.submit(self._probe_one, o, d, sample_dates): (o, d) for (o, d) in todo
+            }
+            try:
+                for fut in as_completed(futures):
+                    o, d = futures[fut]
+                    self._store_nonstop(o, d, fut.result())
+                    completed += 1
+                    if completed % 50 == 0 or completed == total:
+                        elapsed = time.time() - start
+                        rate = completed / elapsed if elapsed else 0
+                        eta = (total - completed) / rate if rate else 0
+                        print(
+                            f"  nonstop {completed}/{total} ({completed*100//total}%) | "
+                            f"{rate:.1f}/s | yes={self.stat_nonstop_yes} "
+                            f"no={self.stat_nonstop_no} | ETA {_fmt(eta)}",
+                            flush=True,
+                        )
+            except KeyboardInterrupt:
+                ex.shutdown(wait=False, cancel_futures=True)
+                print(
+                    "\nNonstop probe interrupted - progress saved. Re-run to resume.",
+                    flush=True,
+                )
+
     # ------------------------------------------------------------------ #
     # worker + storage                                                   #
     # ------------------------------------------------------------------ #
@@ -190,7 +305,13 @@ class Crawler:
     # driver                                                             #
     # ------------------------------------------------------------------ #
 
-    def crawl(self, begin_date: str, end_date: str, origins: Optional[Iterable[str]] = None) -> None:
+    def crawl(
+        self,
+        begin_date: str,
+        end_date: str,
+        origins: Optional[Iterable[str]] = None,
+        probe_nonstop: bool = True,
+    ) -> None:
         begin = _d(begin_date)
         end = _d(end_date)
         window_span = _dt.timedelta(days=self.provider.lowfare_window_days - 1)
@@ -223,43 +344,50 @@ class Crawler:
             f"Tasks to do: {total} ({already} already done/skipped) | Workers: {self.workers}",
             flush=True,
         )
-        if total == 0:
-            print("Nothing to do - crawl already complete for this range.")
-            self._report()
-            return
 
-        start = time.time()
-        completed = 0
-        with ThreadPoolExecutor(max_workers=self.workers) as ex:
-            futures = {
-                ex.submit(self._fetch, o, d, w, we): (o, d, w, we)
-                for (o, d, w, we) in tasks
-            }
-            try:
-                for fut in as_completed(futures):
-                    o, d, w, we = futures[fut]
-                    status, fares = fut.result()
-                    self._store(o, d, w, we, status, fares)
-                    completed += 1
-                    if completed % 50 == 0 or completed == total:
-                        elapsed = time.time() - start
-                        rate = completed / elapsed if elapsed else 0
-                        eta = (total - completed) / rate if rate else 0
-                        print(
-                            f"  {completed}/{total} ({completed*100//total}%) | "
-                            f"{rate:.1f} win/s | rows={self.stat_rows} "
-                            f"nomarket={self.stat_nomarket} err={self.stat_errors} | "
-                            f"ETA {_fmt(eta)}",
-                            flush=True,
-                        )
-            except KeyboardInterrupt:
-                # Cancel queued (not-yet-started) work so we stop promptly rather
-                # than draining the whole queue on context-manager exit.
-                ex.shutdown(wait=False, cancel_futures=True)
-                print(
-                    "\nInterrupted - progress saved. Re-run the same command to resume.",
-                    flush=True,
-                )
+        interrupted = False
+        if total == 0:
+            print("Nothing to do - low-fare crawl already complete for this range.")
+        else:
+            start = time.time()
+            completed = 0
+            with ThreadPoolExecutor(max_workers=self.workers) as ex:
+                futures = {
+                    ex.submit(self._fetch, o, d, w, we): (o, d, w, we)
+                    for (o, d, w, we) in tasks
+                }
+                try:
+                    for fut in as_completed(futures):
+                        o, d, w, we = futures[fut]
+                        status, fares = fut.result()
+                        self._store(o, d, w, we, status, fares)
+                        completed += 1
+                        if completed % 50 == 0 or completed == total:
+                            elapsed = time.time() - start
+                            rate = completed / elapsed if elapsed else 0
+                            eta = (total - completed) / rate if rate else 0
+                            print(
+                                f"  {completed}/{total} ({completed*100//total}%) | "
+                                f"{rate:.1f} win/s | rows={self.stat_rows} "
+                                f"nomarket={self.stat_nomarket} err={self.stat_errors} | "
+                                f"ETA {_fmt(eta)}",
+                                flush=True,
+                            )
+                except KeyboardInterrupt:
+                    # Cancel queued (not-yet-started) work so we stop promptly rather
+                    # than draining the whole queue on context-manager exit.
+                    interrupted = True
+                    ex.shutdown(wait=False, cancel_futures=True)
+                    print(
+                        "\nInterrupted - progress saved. Re-run the same command to resume.",
+                        flush=True,
+                    )
+
+        # Nonstop probe runs after the low-fare pass so it can skip markets the
+        # crawl just proved invalid. Skipped on interrupt (it's resumable on the
+        # next run). Both passes are independently resumable.
+        if probe_nonstop and not interrupted:
+            self._probe_pass(pairs, begin, end)
         self._report()
 
     def _report(self) -> None:
@@ -274,11 +402,24 @@ class Crawler:
             nomarket = self._conn.execute(
                 "SELECT COUNT(*) FROM routes WHERE provider=? AND valid=0", (self.provider.name,)
             ).fetchone()[0]
+            nonstop_yes, nonstop_no = self._conn.execute(
+                "SELECT "
+                "SUM(CASE WHEN nonstop=1 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN nonstop=0 THEN 1 ELSE 0 END) "
+                "FROM routes WHERE provider=?",
+                (self.provider.name,),
+            ).fetchone()
         print(
             f"\nDataset: {rows} fare-rows across {routes} routes "
             f"({nomarket} invalid markets skipped) -> {self.db_path}",
             flush=True,
         )
+        if nonstop_yes or nonstop_no:
+            print(
+                f"Nonstop service: {nonstop_yes or 0} market(s) nonstop, "
+                f"{nonstop_no or 0} connecting-only.",
+                flush=True,
+            )
 
     def close(self) -> None:
         self._conn.close()

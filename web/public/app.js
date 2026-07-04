@@ -24,6 +24,7 @@
     origins: [],
     origin: null,
     metric: "cash", // 'cash' | 'miles'
+    nonstopOnly: false,
     dates: [],
     range: [0, 0],
     hover: null,
@@ -53,6 +54,7 @@
     originClear: $("#originClear"),
     combobox: $("#combobox"),
     metricToggle: $("#metricToggle"),
+    stopsToggle: $("#stopsToggle"),
     rangeMin: $("#rangeMin"),
     rangeMax: $("#rangeMax"),
     rangeFill: $("#rangeFill"),
@@ -367,6 +369,7 @@
     const routes = state.routesByOrigin[state.origin] || [];
     const deals = [];
     routes.forEach((r) => {
+      if (state.nonstopOnly && r.nonstop !== 1) return;
       const wb = windowBest(r);
       if (!wb) return;
       const dest = state.airports[r.d];
@@ -424,9 +427,11 @@
       return;
     }
     if (!state.deals.length) {
-      list.innerHTML =
-        `<div class="deal-empty"><p class="deal-empty-title">No fares in this window</p>` +
-        `<p class="deal-empty-sub">Widen the travel window or pick another home airport.</p></div>`;
+      list.innerHTML = state.nonstopOnly
+        ? `<div class="deal-empty"><p class="deal-empty-title">No nonstop routes here</p>` +
+          `<p class="deal-empty-sub">Switch Stops back to All, widen the window, or try another home airport.</p></div>`
+        : `<div class="deal-empty"><p class="deal-empty-title">No fares in this window</p>` +
+          `<p class="deal-empty-sub">Widen the travel window or pick another home airport.</p></div>`;
       return;
     }
     const head = document.createElement("div");
@@ -637,6 +642,23 @@
         renderLegend();
         if (state.origin) drawScene(false);
         if (state.selected) renderRouteDetail(state.selected);
+      });
+    });
+
+    el.stopsToggle.querySelectorAll(".segmented-opt").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const wantNonstop = btn.dataset.stops === "nonstop";
+        if (state.nonstopOnly === wantNonstop) return;
+        state.nonstopOnly = wantNonstop;
+        el.stopsToggle.querySelectorAll(".segmented-opt").forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle("is-active", on);
+          b.setAttribute("aria-checked", on ? "true" : "false");
+        });
+        if (state.origin) drawScene(false);
+        // A selected route may no longer be in the filtered set.
+        if (state.selected && !state.dealByCode[state.selected]) setSelected(null);
+        else if (state.selected) renderRouteDetail(state.selected);
       });
     });
 

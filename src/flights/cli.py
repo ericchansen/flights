@@ -111,9 +111,15 @@ def cmd_lowfares(provider: BaseProvider, args) -> None:
     end = args.end or (_d(begin) + _dt.timedelta(days=args.days - 1)).isoformat()
     pairs = _resolve_pairs(provider, args)
     header = _header(DayFare)
-    _log(f"[{provider.name}] Low-fare calendar: {len(pairs)} route(s), {begin}..{end}")
+    nonstop = getattr(args, "nonstop", False)
+    sample_dates = _sample_dates(begin, end) if nonstop else []
+    _log(f"[{provider.name}] Low-fare calendar: {len(pairs)} route(s), {begin}..{end}"
+         f"{' (nonstop markets only)' if nonstop else ''}")
     all_rows = []
     for i, (o, d) in enumerate(pairs, 1):
+        if nonstop and not _market_has_nonstop(provider, o, d, sample_dates):
+            _log(f"  [{i}/{len(pairs)}] {o}-{d}: skipped (no nonstop service)")
+            continue
         try:
             fares = provider.lowfare_calendar(o, d, begin, end)
         except FlightsError as exc:
@@ -158,7 +164,8 @@ def cmd_crawl(provider: BaseProvider, args) -> None:
     origins = _split(args.origins) if args.origins else None
     crawler = Crawler(provider, db_path=args.db, workers=args.workers)
     try:
-        crawler.crawl(begin, end, origins=origins)
+        crawler.crawl(begin, end, origins=origins,
+                      probe_nonstop=not getattr(args, "skip_nonstop_probe", False))
     finally:
         crawler.close()
 
@@ -180,6 +187,32 @@ def _cheapest(row: dict):
     vals = [row.get(k) for k in ("standard_fare", "discounted_fare", "saver_fare")]
     vals = [v for v in vals if v is not None]
     return min(vals) if vals else None
+
+
+def _sample_dates(begin: str, end: str) -> list[str]:
+    """1-2 representative dates to probe a market for nonstop service."""
+    b, e = _d(begin), _d(end)
+    span = (e - b).days
+    if span <= 0:
+        return [b.isoformat()]
+    mid = b + _dt.timedelta(days=span // 2)
+    return [x.isoformat() for x in sorted({b, mid})]
+
+
+def _market_has_nonstop(provider: BaseProvider, o: str, d: str, dates: list[str]) -> bool:
+    """True if the market offers nonstop service on any sampled date.
+
+    Uses ``flights(nonstop_only=False)`` and inspects ``is_nonstop`` so an empty
+    result on one sampled day (no service) doesn't wrongly reject the market.
+    """
+    for date in dates:
+        try:
+            trips = provider.flights(o, d, date, nonstop_only=False)
+        except FlightsError:
+            continue
+        if trips:
+            return any(t.is_nonstop for t in trips)
+    return False
 
 
 def _apply_filters(rows, args, cash_keys, miles_key):
@@ -253,6 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
     _route_args(pl)
     pl.add_argument("--begin"); pl.add_argument("--end")
     pl.add_argument("--days", type=int, default=30)
+    pl.add_argument("--nonstop", action="store_true",
+                    help="Only include markets that offer nonstop (continuous) service.")
     pl.add_argument("--max-price", type=float); pl.add_argument("--max-miles", type=int)
     pl.add_argument("--out"); pl.add_argument("--db")
     pl.set_defaults(func=cmd_lowfares)
@@ -271,6 +306,8 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--days", type=int, default=60)
     pc.add_argument("--origins", help="Comma list of US origins (default: all US).")
     pc.add_argument("--workers", type=int, default=8)
+    pc.add_argument("--skip-nonstop-probe", action="store_true",
+                    help="Skip the per-market nonstop-service probe pass.")
     pc.set_defaults(func=cmd_crawl)
     return p
 
