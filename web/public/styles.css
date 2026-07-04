@@ -422,6 +422,90 @@ button { font: inherit; color: inherit; }
 .deal-empty-sub { margin: 0; font-size: var(--t-sm); max-width: 30ch; color: var(--muted); }
 
 /* ============================================================================
+   Plan a trip — mode visibility + itinerary cards
+   ========================================================================== */
+.plan-only.field { display: none; }
+body[data-mode="plan"] .plan-only.field { display: flex; }
+/* The fare-ramp legend describes Explore's per-fare colouring; trip paths use a
+   single accent colour, so the ramp would be misleading in Plan mode. */
+body[data-mode="plan"] #legend { display: none; }
+
+.rangeslider.single .rangeslider-fill { left: 0; }
+
+.trip-card {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  column-gap: var(--s2);
+  row-gap: 3px;
+  align-items: center;
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--surface-2);
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-left: 0;
+  transition: background var(--dur);
+}
+.trip-card:hover { background: var(--surface-2); }
+.trip-card.is-selected { background: var(--primary-weak); }
+.trip-card:focus-visible { box-shadow: inset 0 0 0 2px var(--primary); border-radius: 2px; outline: none; }
+.trip-rank {
+  grid-row: 1 / span 2;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--faint);
+  text-align: right;
+  align-self: center;
+}
+.trip-route {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 2px 4px;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 0;
+}
+.trip-hop { color: var(--faint); font-weight: 400; }
+.trip-price {
+  grid-row: 1 / span 2;
+  text-align: right;
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 1px;
+}
+.trip-total { font-size: var(--t-base); font-weight: 700; color: var(--ink); }
+.trip-perday { font-size: var(--t-xs); color: var(--faint); }
+.trip-meta {
+  grid-column: 2;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  font-size: var(--t-xs); color: var(--muted);
+}
+.trip-badge {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--muted);
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  border-radius: var(--r-sm);
+  padding: 1px 5px; line-height: 1.4;
+}
+
+/* trip path on the map */
+.trip-arc { fill: none; stroke: var(--primary); stroke-linecap: round; }
+.trip-seq {
+  fill: var(--primary);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: var(--bg);
+}
+.trip-city-label {
+  fill: var(--ink);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg);
+}
+
+/* ============================================================================
    Map
    ========================================================================== */
 .map-wrap {

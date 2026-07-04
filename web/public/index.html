@@ -28,6 +28,14 @@
       <div class="sidebar-scroll">
         <div class="controls">
           <div class="field">
+            <span class="field-label" id="modeLabel">Mode</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="modeLabel" id="modeToggle">
+              <button class="segmented-opt is-active" role="radio" aria-checked="true" data-mode="explore">Explore</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-mode="plan">Plan a trip</button>
+            </div>
+          </div>
+
+          <div class="field">
             <label class="field-label" for="originInput">Home airport</label>
             <div class="combobox" id="combobox">
               <input
@@ -76,9 +84,52 @@
               <input type="range" id="rangeMax" class="rangeslider-input" min="0" max="0" value="0" step="1" aria-label="Latest date" />
             </div>
           </div>
+          <div class="field plan-only">
+            <span class="field-label" id="shapeLabel">Trip shape</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="shapeLabel" id="shapeToggle">
+              <button class="segmented-opt is-active" role="radio" aria-checked="true" data-maxstops="1">Round-trip</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-maxstops="2">+1 city</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-maxstops="3">+2 cities</button>
+            </div>
+          </div>
+
+          <div class="field plan-only">
+            <div class="field-row">
+              <span class="field-label">Trip length</span>
+              <span class="window-readout tnum" id="lengthReadout"></span>
+            </div>
+            <div class="rangeslider" id="lengthSlider">
+              <div class="rangeslider-track"></div>
+              <div class="rangeslider-fill" id="lengthFill"></div>
+              <input type="range" id="lengthMin" class="rangeslider-input" min="2" max="21" value="4" step="1" aria-label="Shortest trip in days" />
+              <input type="range" id="lengthMax" class="rangeslider-input" min="2" max="21" value="9" step="1" aria-label="Longest trip in days" />
+            </div>
+          </div>
+
+          <div class="field plan-only">
+            <span class="field-label" id="nightsLabel">Nights per stop</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="nightsLabel" id="nightsToggle">
+              <button class="segmented-opt is-active" role="radio" aria-checked="true" data-nights="1">1+</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-nights="2">2+</button>
+              <button class="segmented-opt" role="radio" aria-checked="false" data-nights="3">3+</button>
+            </div>
+          </div>
+
+          <div class="field plan-only">
+            <div class="field-row">
+              <span class="field-label">Max budget</span>
+              <span class="window-readout tnum" id="budgetReadout"></span>
+            </div>
+            <div class="rangeslider single" id="budgetSlider">
+              <div class="rangeslider-track"></div>
+              <div class="rangeslider-fill" id="budgetFill"></div>
+              <input type="range" id="budgetInput" class="rangeslider-input" min="0" max="100" value="100" step="1" aria-label="Maximum total price" />
+            </div>
+          </div>
         </div>
 
         <div class="deal-summary" id="dealSummary" hidden></div>
+        <div class="deal-summary plan-only" id="planSummary" hidden></div>
 
         <div class="deal-list" id="dealList" aria-label="Cheapest destinations">
           <div class="deal-empty" id="dealEmpty">
@@ -87,6 +138,16 @@
             </div>
             <p class="deal-empty-title">Pick a home airport</p>
             <p class="deal-empty-sub">We'll rank every destination by its cheapest fare and light up the map.</p>
+          </div>
+        </div>
+
+        <div class="deal-list plan-only" id="tripList" aria-label="Suggested trips" hidden>
+          <div class="deal-empty" id="tripEmpty">
+            <div class="deal-empty-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2"/></svg>
+            </div>
+            <p class="deal-empty-title">Pick a home airport</p>
+            <p class="deal-empty-sub">We'll build cheap round-trips and multi-city vacations from home and rank them by total price.</p>
           </div>
         </div>
       </div>
@@ -119,6 +180,7 @@
 
   <script src="vendor/d3.min.js"></script>
   <script src="vendor/topojson-client.min.js"></script>
+  <script src="trips.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
