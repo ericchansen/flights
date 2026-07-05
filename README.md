@@ -207,6 +207,26 @@ projection fit to the served network. Everything after the export is
 client-side D3 — open `web/public/app.js` to see the rendering and interaction
 logic.
 
+#### The `data.json` snapshot
+
+`web/public/data.json` is a **generated** artifact, but it is intentionally
+committed to the repository. The deploy (see below) is build-free — it uploads
+`web/public/` as-is with `skip_app_build: true` and has no database or data step —
+so the snapshot has to be present in version control for the site to have any
+data. To refresh it, re-run the export against a current crawl DB and commit the
+result:
+
+```powershell
+python web/build_data.py path\to\us_lowfares.db
+git add web/public/data.json && git commit -m "chore(web): refresh fare snapshot"
+```
+
+Crawl databases (`*.db`) are git-ignored and never committed, so CI cannot
+regenerate the snapshot on its own. If de-committing `data.json` becomes
+worthwhile, host the source DB (or the snapshot) somewhere the deploy job can
+fetch it and generate `data.json` as a deploy step — that is the only change that
+removes it from git without breaking the live site.
+
 ### Deploy to Azure
 
 The app is hosted on **Azure Static Web Apps** (Free tier — global CDN, free
