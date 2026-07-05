@@ -17,14 +17,12 @@ Usage:
 Defaults: db = $FLIGHTS_DB or ./us_lowfares.db, out = web/public/data.json
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Allow running as a standalone script (``python web/build_data.py``) without
 # installing the package: make ``src/`` importable, then pull the schema's
@@ -192,7 +190,7 @@ def main() -> None:
 
     meta = {
         "provider": provider,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "dates": dates,
         "date_min": dates[0] if dates else None,
         "date_max": dates[-1] if dates else None,

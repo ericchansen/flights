@@ -1,7 +1,5 @@
 """Exception hierarchy shared by all flight providers."""
 
-from __future__ import annotations
-
 
 class FlightsError(RuntimeError):
     """Base class for every error raised by this library."""

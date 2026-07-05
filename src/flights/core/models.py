@@ -7,13 +7,11 @@ Provider-specific extras that don't fit the common fields go in ``extra`` so
 we never lose data and never have to widen the core schema per airline.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
-def cheapest_cash(*fares: Optional[float]) -> Optional[float]:
+def cheapest_cash(*fares: float | None) -> float | None:
     """Lowest of the given cash-fare tiers, or ``None`` if all are missing.
 
     The single Python implementation of the "cheapest cash" rule, shared by the
@@ -32,9 +30,9 @@ class Airport:
     full_name: str
     country_code: str
     country_name: str
-    state_code: Optional[str] = None
-    lat: Optional[str] = None
-    long: Optional[str] = None
+    state_code: str | None = None
+    lat: str | None = None
+    long: str | None = None
 
     @property
     def is_domestic_us(self) -> bool:
@@ -55,16 +53,16 @@ class DayFare:
     origin: str
     destination: str
     date: str  # YYYY-MM-DD
-    standard_fare: Optional[float] = None
-    discounted_fare: Optional[float] = None
-    saver_fare: Optional[float] = None
-    miles: Optional[int] = None
-    miles_fees: Optional[float] = None
+    standard_fare: float | None = None
+    discounted_fare: float | None = None
+    saver_fare: float | None = None
+    miles: int | None = None
+    miles_fees: float | None = None
     currency: str = "USD"
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def cheapest_cash(self) -> Optional[float]:
+    def cheapest_cash(self) -> float | None:
         return cheapest_cash(self.standard_fare, self.discounted_fare, self.saver_fare)
 
 
@@ -79,14 +77,14 @@ class Flight:
     flight_number: str
     depart_time: str  # ISO
     arrive_time: str  # ISO
-    aircraft: Optional[str] = None
+    aircraft: str | None = None
     stops: int = 0
     flight_type: str = ""  # "NonStop" / "Connecting" / provider-specific
-    duration: Optional[str] = None
-    standard_fare: Optional[float] = None
-    discounted_fare: Optional[float] = None
-    saver_fare: Optional[float] = None
-    miles: Optional[int] = None
+    duration: str | None = None
+    standard_fare: float | None = None
+    discounted_fare: float | None = None
+    saver_fare: float | None = None
+    miles: int | None = None
     currency: str = "USD"
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -95,5 +93,5 @@ class Flight:
         return self.stops == 0 or self.flight_type.lower() in ("nonstop", "direct")
 
     @property
-    def cheapest_cash(self) -> Optional[float]:
+    def cheapest_cash(self) -> float | None:
         return cheapest_cash(self.standard_fare, self.discounted_fare, self.saver_fare)

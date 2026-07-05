@@ -9,15 +9,13 @@ Crash-safe & resumable: every window is recorded in ``crawl_windows``; a re-run
 skips finished windows. Invalid markets are cached in ``routes`` and skipped.
 """
 
-from __future__ import annotations
-
 import datetime as _dt
 import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Iterable, Optional
 
 from . import storage
 from .errors import MarketNotFoundError, ProviderError
@@ -189,7 +187,7 @@ class Crawler:
     # reference data                                                     #
     # ------------------------------------------------------------------ #
 
-    def build_us_routes(self, origins: Optional[Iterable[str]] = None) -> list[tuple[str, str]]:
+    def build_us_routes(self, origins: Iterable[str] | None = None) -> list[tuple[str, str]]:
         origin_airports = self.provider.origins()
         self.store.upsert_airports(origin_airports, mode="INSERT OR REPLACE")
 
@@ -351,7 +349,7 @@ class Crawler:
         self,
         begin_date: str,
         end_date: str,
-        origins: Optional[Iterable[str]] = None,
+        origins: Iterable[str] | None = None,
         probe_nonstop: bool = True,
     ) -> None:
         begin = _d(begin_date)

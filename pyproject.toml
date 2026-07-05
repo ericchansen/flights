@@ -53,8 +53,9 @@ target-version = "py312"
 extend-exclude = ["web/public/vendor"]
 
 [tool.ruff.lint]
-# UP (pyupgrade) and SIM are enabled later in the Python 3.12 modernization sweep.
-select = ["E", "F", "I", "B"]
+# E/F = pycodestyle+pyflakes, I = isort, B = bugbear, UP = pyupgrade (modern
+# syntax), SIM = flake8-simplify. UP/SIM were enabled with the 3.12 sweep.
+select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["flights"]

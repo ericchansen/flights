@@ -60,10 +60,10 @@ def test_insert_sql_builds_parameterized_statement():
 
 def test_column_tuples_match_dataclass_fields():
     # Drift guard: the schema's airport columns must equal the model's fields.
-    assert storage.AIRPORT_COLUMNS == tuple(f.name for f in fields(Airport))
+    assert tuple(f.name for f in fields(Airport)) == storage.AIRPORT_COLUMNS
     # lowfares == DayFare fields (minus the non-persisted `extra`) plus scraped_at.
     dayfare_cols = tuple(f.name for f in fields(DayFare) if f.name != "extra")
-    assert storage.LOWFARE_COLUMNS == (*dayfare_cols, "scraped_at")
+    assert (*dayfare_cols, "scraped_at") == storage.LOWFARE_COLUMNS
 
 
 def test_airport_row_is_in_column_order():

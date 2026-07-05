@@ -23,7 +23,7 @@ def test_schema_db_creates_all_tables(schema_db):
         names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     finally:
         conn.close()
-    assert EXPECTED_TABLES <= names
+    assert names >= EXPECTED_TABLES
 
 
 def test_routes_table_has_nonstop_column(schema_db):
