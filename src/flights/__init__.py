@@ -16,23 +16,22 @@ Quick start::
         print(f.flight_number, f.depart_time, f.cheapest_cash, f.miles)
 """
 
+# Importing the providers package registers the bundled airlines.
+from . import providers  # noqa: F401,E402
 from .core import (
     Airport,
     AuthError,
     BaseProvider,
     Crawler,
     DayFare,
-    FlightsError,
     Flight,
+    FlightsError,
     MarketNotFoundError,
     ProviderError,
     available_providers,
     get_provider,
     register_provider,
 )
-
-# Importing the providers package registers the bundled airlines.
-from . import providers  # noqa: F401,E402
 
 __version__ = "0.2.0"
 

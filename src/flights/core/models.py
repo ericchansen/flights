@@ -53,8 +53,9 @@ class DayFare:
 
     @property
     def cheapest_cash(self) -> Optional[float]:
-        vals = [v for v in (self.standard_fare, self.discounted_fare, self.saver_fare)
-                if v is not None]
+        vals = [
+            v for v in (self.standard_fare, self.discounted_fare, self.saver_fare) if v is not None
+        ]
         return min(vals) if vals else None
 
 
@@ -86,6 +87,7 @@ class Flight:
 
     @property
     def cheapest_cash(self) -> Optional[float]:
-        vals = [v for v in (self.standard_fare, self.discounted_fare, self.saver_fare)
-                if v is not None]
+        vals = [
+            v for v in (self.standard_fare, self.discounted_fare, self.saver_fare) if v is not None
+        ]
         return min(vals) if vals else None

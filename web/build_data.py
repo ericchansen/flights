@@ -54,9 +54,7 @@ def dms_to_decimal(raw: str | None) -> float | None:
 
 
 def _table_exists(q, table: str) -> bool:
-    row = q(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    ).fetchone()
+    row = q("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
     return row is not None
 
 
@@ -86,15 +84,13 @@ def main() -> None:
     n_dates = len(dates)
 
     cheapest_expr = (
-        "MIN(COALESCE(standard_fare,1e9),COALESCE(discounted_fare,1e9),"
-        "COALESCE(saver_fare,1e9))"
+        "MIN(COALESCE(standard_fare,1e9),COALESCE(discounted_fare,1e9)," "COALESCE(saver_fare,1e9))"
     )
 
     # --- airports (parse coords) -------------------------------------------
     airports: dict[str, dict] = {}
     for code, city, name, cc, state, lat, lon in q(
-        "SELECT code, city, full_name, country_code, state_code, lat, long "
-        "FROM airports"
+        "SELECT code, city, full_name, country_code, state_code, lat, long " "FROM airports"
     ).fetchall():
         dlat, dlon = dms_to_decimal(lat), dms_to_decimal(lon)
         if dlat is None or dlon is None:
