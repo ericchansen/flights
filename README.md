@@ -191,7 +191,8 @@ snapshot.
 
 ```powershell
 # 1. Export a crawl DB to the app's data snapshot (web/public/data.json)
-python web/build_data.py D:\flights-data\us_lowfares.db
+#    Pass the DB path, or set $env:FLIGHTS_DB to point at your crawl store.
+python web/build_data.py path\to\us_lowfares.db
 
 # 2. Serve the static app (any static server works)
 python -m http.server 8777 --directory web/public
