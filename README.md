@@ -38,8 +38,8 @@ flights/
 ├── web/                       # offline interactive fare map (see below)
 │   ├── build_data.py          #   crawl DB -> public/data.json snapshot
 │   └── public/                #   static app: index.html, styles.css, app.js
-├── pyproject.toml             # src layout; console script `flights`
-├── requirements.txt           # single dep: requests
+├── pyproject.toml             # src layout; console script `flights`; deps + version
+├── requirements.txt           # thin pointer to pyproject (installs the project)
 ├── LICENSE                    # MIT
 └── README.md
 ```
@@ -55,11 +55,11 @@ package works from a clean checkout with no secrets or config.
 ## Install
 
 ```powershell
-python -m pip install -r requirements.txt      # just needs `requests`
-python -m pip install -e .                      # optional: `flights` console command
+python -m pip install -e .            # installs `requests` + the `flights` console command
+python -m pip install -e ".[dev]"     # add the test/lint/type tooling for contributing
 ```
 
-Requires Python ≥ 3.9.
+Requires Python ≥ 3.12.
 
 ---
 

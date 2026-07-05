@@ -1,1 +1,9 @@
-requests>=2.28
+# Runtime dependencies are declared in pyproject.toml (the single source of
+# truth). Installing this file installs the project and everything it needs, so
+# the `requests` pin never has to be repeated here.
+#
+#   python -m pip install -r requirements.txt
+#
+# For the editable install that also exposes the `flights` console command and
+# the dev tooling, use:  python -m pip install -e ".[dev]"
+.

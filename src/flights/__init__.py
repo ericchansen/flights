@@ -16,6 +16,8 @@ Quick start::
         print(f.flight_number, f.depart_time, f.cheapest_cash, f.miles)
 """
 
+from importlib.metadata import PackageNotFoundError, version
+
 # Importing the providers package registers the bundled airlines.
 from . import providers  # noqa: F401,E402
 from .core import (
@@ -33,7 +35,13 @@ from .core import (
     register_provider,
 )
 
-__version__ = "0.2.0"
+try:
+    # Single source of truth: the version declared in pyproject.toml, read back
+    # from the installed package metadata so it never drifts from a hard-coded
+    # literal here.
+    __version__ = version("flights")
+except PackageNotFoundError:  # pragma: no cover - only when running un-installed
+    __version__ = "0.0.0+unknown"
 
 __all__ = [
     "get_provider",

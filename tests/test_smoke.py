@@ -1,10 +1,20 @@
 """Smoke tests that prove the offline test harness itself works."""
 
 import sqlite3
+from importlib.metadata import version
 
 from _frontier import BFF_ENDPOINT, origins_payload
 
+import flights
+
 EXPECTED_TABLES = {"airports", "routes", "lowfares", "crawl_windows", "crawl_meta"}
+
+
+def test_version_is_single_sourced_from_metadata():
+    # __version__ must come from the installed package metadata (pyproject.toml),
+    # not a hard-coded literal, and never fall back to the un-installed sentinel.
+    assert flights.__version__ == version("flights")
+    assert flights.__version__ != "0.0.0+unknown"
 
 
 def test_schema_db_creates_all_tables(schema_db):
