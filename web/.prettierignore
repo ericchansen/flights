@@ -1,0 +1,20 @@
+# Vendored, minified libraries and generated data — never hand-formatted.
+public/vendor/
+public/data.json
+
+# Generated / pre-existing files we don't reformat.
+package-lock.json
+public/staticwebapp.config.json
+
+node_modules/
+coverage/
+
+# Pre-existing hand-formatted sources. These predate Prettier adoption and use a
+# deliberately compact style; they are ESLint-clean but intentionally left out of
+# the Prettier pass to avoid a large, risky whole-file reformat. Migrate in a
+# dedicated formatting-only commit (with a fresh in-browser parity check) later.
+public/app.js
+public/trips.js
+public/index.html
+public/styles.css
+public/tokens.css

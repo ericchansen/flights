@@ -11,3 +11,7 @@ dist/
 
 # impeccable design-skill local hook cache (machine-specific)
 .impeccable/
+
+# front-end tooling (web/)
+node_modules/
+web/coverage/

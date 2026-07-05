@@ -1,0 +1,22 @@
+{
+  "name": "flights-web",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline, build-free fare-map front-end for the flights dataset.",
+  "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run lint && npm run format && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "globals": "^15.12.0",
+    "prettier": "^3.3.3",
+    "vitest": "^2.1.5"
+  }
+}
