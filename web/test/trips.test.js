@@ -77,6 +77,21 @@ describe("findTrips", () => {
     expect(findTrips(makeDataset(), { ...base, minTrip: 5 }).trips).toEqual([]);
   });
 
+  it("does not crash when a destination has no outbound routes", () => {
+    // MOAB is reachable from DEN but has no entry in routesByPair (nothing was
+    // exported leaving it), so the return-leg lookup MOAB->DEN must be treated as
+    // unusable rather than throwing and aborting the whole search.
+    const ds = makeDataset();
+    ds.routesByPair.DEN.MOAB = { cashByDate: [30, 30, 30, 30, 30], milesByDate: [], nonstop: 1 };
+    let res;
+    expect(() => {
+      res = findTrips(ds, base);
+    }).not.toThrow();
+    // The dead-end destination yields no itinerary, but normal round-trips still do.
+    expect(res.trips.some((t) => t.cities.includes("MOAB"))).toBe(false);
+    expect(res.trips.some((t) => t.cities.join(">") === "SLC")).toBe(true);
+  });
+
   it("truncates to the limit and flags it", () => {
     const res = findTrips(makeDataset(), { ...base, maxStops: 2, limit: 1 });
     expect(res.trips).toHaveLength(1);

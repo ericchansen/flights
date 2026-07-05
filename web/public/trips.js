@@ -112,8 +112,11 @@ function findTrips(dataset, params) {
   function extend(city, arriveIdx, startIdx, cities, legs, cost) {
     result.considered++;
 
-    // Option 1: close the trip by flying city → home.
-    const back = routesByPair[city][home];
+    // Option 1: close the trip by flying city → home. `routesByPair[city]` can be
+    // undefined for a destination-only city (reachable from elsewhere but with no
+    // outbound routes exported), so guard the lookup and treat a missing return leg
+    // as unusable instead of throwing.
+    const back = routesByPair[city] && routesByPair[city][home];
     if (usable(back)) {
       const earliestReturn = arriveIdx + minStay;
       for (let idx = earliestReturn; idx <= hi; idx++) {
