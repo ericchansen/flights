@@ -2,7 +2,20 @@
 
 import pytest
 
-from flights.core.models import Airport, DayFare, Flight
+from flights.core.models import Airport, DayFare, Flight, cheapest_cash
+
+
+def test_cheapest_cash_helper():
+    assert cheapest_cash(120.0, None, 49.0) == 49.0
+    assert cheapest_cash(None, None, None) is None
+    assert cheapest_cash() is None
+
+
+def test_cheapest_cash_property_delegates_to_helper():
+    fare = DayFare("frontier", "DEN", "LAS", "2025-01-01", standard_fare=120.0, saver_fare=49.0)
+    assert fare.cheapest_cash == cheapest_cash(
+        fare.standard_fare, fare.discounted_fare, fare.saver_fare
+    )
 
 
 def test_dayfare_cheapest_cash_picks_minimum():

@@ -27,6 +27,7 @@ from .core import (
     Flight,
     FlightsError,
     available_providers,
+    cheapest_cash,
     get_provider,
 )
 
@@ -211,9 +212,8 @@ def _d(s: str) -> _dt.date:
 
 
 def _cheapest(row: dict) -> float | None:
-    vals = [row.get(k) for k in ("standard_fare", "discounted_fare", "saver_fare")]
-    nums = [float(v) for v in vals if v is not None]
-    return min(nums) if nums else None
+    """Cheapest cash tier for a row-dict, via the shared model rule."""
+    return cheapest_cash(*(row.get(k) for k in ("standard_fare", "discounted_fare", "saver_fare")))
 
 
 def _sample_dates(begin: str, end: str) -> list[str]:

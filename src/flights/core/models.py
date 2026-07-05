@@ -13,6 +13,18 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 
+def cheapest_cash(*fares: Optional[float]) -> Optional[float]:
+    """Lowest of the given cash-fare tiers, or ``None`` if all are missing.
+
+    The single Python implementation of the "cheapest cash" rule, shared by the
+    :class:`DayFare` / :class:`Flight` ``cheapest_cash`` properties and the CLI's
+    row-dict sort key. Its SQL twin is
+    :data:`flights.core.storage.CHEAPEST_CASH_SQL`.
+    """
+    present = [f for f in fares if f is not None]
+    return min(present) if present else None
+
+
 @dataclass(frozen=True)
 class Airport:
     code: str
@@ -53,10 +65,7 @@ class DayFare:
 
     @property
     def cheapest_cash(self) -> Optional[float]:
-        vals = [
-            v for v in (self.standard_fare, self.discounted_fare, self.saver_fare) if v is not None
-        ]
-        return min(vals) if vals else None
+        return cheapest_cash(self.standard_fare, self.discounted_fare, self.saver_fare)
 
 
 @dataclass(frozen=True)
@@ -87,7 +96,4 @@ class Flight:
 
     @property
     def cheapest_cash(self) -> Optional[float]:
-        vals = [
-            v for v in (self.standard_fare, self.discounted_fare, self.saver_fare) if v is not None
-        ]
-        return min(vals) if vals else None
+        return cheapest_cash(self.standard_fare, self.discounted_fare, self.saver_fare)
