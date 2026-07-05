@@ -14,7 +14,7 @@ a route's day-by-day fares with no server and no live API calls.
 Usage:
     python web/build_data.py [path_to_db] [-o out.json]
 
-Defaults: db = D:\\flights-data\\us_lowfares.db, out = web/public/data.json
+Defaults: db = $FLIGHTS_DB or ./us_lowfares.db, out = web/public/data.json
 """
 
 from __future__ import annotations
@@ -33,7 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from flights.core import storage  # noqa: E402  (after the sys.path bootstrap above)
 
-DEFAULT_DB = r"D:\flights-data\us_lowfares.db"
+# Default DB path: honor $FLIGHTS_DB so a machine can point at its own crawl
+# store, otherwise fall back to a portable relative path in the CWD (no
+# hard-coded, machine-specific absolute path).
+DEFAULT_DB = os.environ.get("FLIGHTS_DB", "us_lowfares.db")
 
 
 def dms_to_decimal(raw: str | None) -> float | None:
