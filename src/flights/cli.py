@@ -10,8 +10,6 @@ stdout. Rows are sorted cheapest-first.
     python -m flights.cli crawl    --db data.db --days 30 --workers 8
 """
 
-from __future__ import annotations
-
 import argparse
 import csv
 import datetime as _dt
@@ -19,7 +17,6 @@ import logging
 import sqlite3
 import sys
 from dataclasses import asdict, fields
-from typing import Optional
 
 from .core import (
     BaseProvider,
@@ -384,7 +381,7 @@ def _route_args(sp) -> None:
     sp.add_argument("--destinations", help="Comma list of destinations (paired with origins).")
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         provider = get_provider(

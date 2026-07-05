@@ -14,13 +14,10 @@ Thread-safe: token minting is locked and each thread gets its own HTTP session,
 so a single instance can back the concurrent crawler.
 """
 
-from __future__ import annotations
-
 import datetime as _dt
 import threading
 import time
 import uuid
-from typing import Optional
 
 import requests
 
@@ -78,8 +75,8 @@ class FrontierProvider(BaseProvider):
 
     def __init__(
         self,
-        subscription_key: Optional[str] = None,
-        bff_endpoint: Optional[str] = None,
+        subscription_key: str | None = None,
+        bff_endpoint: str | None = None,
         currency: str = "USD",
         request_delay: float = 0.0,
         timeout: float = 45.0,
@@ -92,7 +89,7 @@ class FrontierProvider(BaseProvider):
 
         self._subscription_key = subscription_key
         self._bff_endpoint = bff_endpoint
-        self._token: Optional[str] = None
+        self._token: str | None = None
         self._token_expires: float = 0.0
         self._token_lock = threading.Lock()
 
@@ -147,7 +144,7 @@ class FrontierProvider(BaseProvider):
         return h
 
     def _post(self, url: str, payload: dict, with_token: bool) -> dict:
-        last: Optional[Exception] = None
+        last: Exception | None = None
         for attempt in range(1, self.max_retries + 1):
             if self.request_delay:
                 time.sleep(self.request_delay)
@@ -376,5 +373,5 @@ def _i(v):
         return None
 
 
-def _key(key: Optional[dict]):
+def _key(key: dict | None):
     return _f(key.get("farePrice")) if key else None

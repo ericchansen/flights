@@ -9,11 +9,9 @@ Required methods:  ``origins``, ``destinations``, ``lowfare_window``, ``flights`
 Everything else (route expansion, calendar chunking) has a default here.
 """
 
-from __future__ import annotations
-
 import abc
 import datetime as _dt
-from typing import Iterable, Iterator, Optional
+from collections.abc import Iterable, Iterator
 
 from .models import Airport, DayFare, Flight
 
@@ -81,7 +79,7 @@ class BaseProvider(abc.ABC):
         """Codes of domestic-US origins (default: filter :meth:`origins`)."""
         return [a.code for a in self.origins() if a.is_domestic_us]
 
-    def routes(self, origins: Optional[Iterable[str]] = None) -> Iterator[tuple[str, str]]:
+    def routes(self, origins: Iterable[str] | None = None) -> Iterator[tuple[str, str]]:
         """Yield ``(origin, destination)`` pairs across the network."""
         origins = list(origins) if origins is not None else [a.code for a in self.origins()]
         for o in origins:

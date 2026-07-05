@@ -5,9 +5,7 @@ use :func:`get_provider` / :func:`available_providers` without importing any
 concrete provider class.
 """
 
-from __future__ import annotations
-
-from typing import Callable
+from collections.abc import Callable
 
 from .errors import FlightsError
 from .provider import BaseProvider
