@@ -12,6 +12,7 @@ skips finished windows. Invalid markets are cached in ``routes`` and skipped.
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import sqlite3
 import threading
 import time
@@ -21,6 +22,147 @@ from typing import Iterable, Optional
 from . import storage
 from .errors import MarketNotFoundError, ProviderError
 from .provider import BaseProvider
+
+logger = logging.getLogger(__name__)
+
+
+class CrawlStore:
+    """Owns the SQLite connection and every crawl read/write.
+
+    Separating persistence from :class:`Crawler` keeps the orchestration
+    (threading, window planning, the nonstop probe) free of SQL and lets each
+    concern be tested on its own. Each method preserves the crawler's original
+    locking and per-operation commit boundaries, so a crash mid-crawl leaves a
+    consistent, resumable database.
+    """
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        storage.init_db(self._conn)
+
+    # -- writes -------------------------------------------------------------- #
+
+    def upsert_airports(self, airports: Iterable, *, mode: str) -> None:
+        rows = [storage.airport_row(a) for a in airports]
+        with self._lock:
+            self._conn.executemany(
+                storage.insert_sql("airports", storage.AIRPORT_COLUMNS, mode=mode), rows
+            )
+            self._conn.commit()
+
+    def add_destinations(self, provider: str, origin: str, dests: Iterable) -> None:
+        """Register destination airports and their (initially unqualified) routes."""
+        dest_list = list(dests)
+        with self._lock:
+            self._conn.executemany(
+                storage.insert_sql("airports", storage.AIRPORT_COLUMNS, mode="INSERT OR IGNORE"),
+                [storage.airport_row(d) for d in dest_list],
+            )
+            self._conn.executemany(
+                storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR IGNORE"),
+                [(provider, origin, d.code, None, None, None) for d in dest_list],
+            )
+            self._conn.commit()
+
+    def record_window_result(
+        self,
+        provider: str,
+        origin: str,
+        dest: str,
+        begin: _dt.date,
+        end: _dt.date,
+        status: str,
+        fares: list,
+        now: str,
+    ) -> int:
+        """Persist one window's outcome atomically; return the fare rows stored."""
+        stored = 0
+        with self._lock:
+            if status == "ok":
+                self._conn.executemany(
+                    storage.insert_sql(
+                        "lowfares", storage.LOWFARE_COLUMNS, mode="INSERT OR REPLACE"
+                    ),
+                    [storage.lowfare_row(provider, f, now) for f in fares],
+                )
+                stored = len(fares)
+            elif status == "nomarket":
+                self._conn.execute(
+                    storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR REPLACE"),
+                    (provider, origin, dest, 0, now, None),
+                )
+
+            win_status = "done" if status in ("ok", "nomarket") else "error"
+            self._conn.execute(
+                storage.insert_sql(
+                    "crawl_windows", storage.CRAWL_WINDOW_COLUMNS, mode="INSERT OR REPLACE"
+                ),
+                (provider, origin, dest, begin.isoformat(), end.isoformat(), win_status, now),
+            )
+            self._conn.commit()
+        return stored
+
+    def upsert_nonstop(self, provider: str, origin: str, dest: str, now: str, nonstop: int) -> None:
+        with self._lock:
+            self._conn.execute(
+                storage.ROUTE_NONSTOP_UPSERT_SQL, (provider, origin, dest, None, now, nonstop)
+            )
+            self._conn.commit()
+
+    # -- reads --------------------------------------------------------------- #
+
+    def done_windows(self, provider: str) -> dict[tuple[str, str, str], str]:
+        """Map (origin, dest, window_begin) -> the window_end already covered."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT origin, destination, window_begin, window_end FROM crawl_windows "
+                "WHERE provider=? AND status='done'",
+                (provider,),
+            ).fetchall()
+        return {(o, d, wb): we for (o, d, wb, we) in rows}
+
+    def invalid_markets(self, provider: str) -> set[tuple[str, str]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT origin, destination FROM routes WHERE provider=? AND valid=0",
+                (provider,),
+            ).fetchall()
+        return set(rows)
+
+    def probed_markets(self, provider: str) -> set[tuple[str, str]]:
+        """Markets whose nonstop status is already known (skip on resume)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT origin, destination FROM routes WHERE provider=? AND nonstop IS NOT NULL",
+                (provider,),
+            ).fetchall()
+        return set(rows)
+
+    def report_counts(self, provider: str) -> tuple[int, int, int, int | None, int | None]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT COUNT(*) FROM lowfares WHERE provider=?", (provider,)
+            ).fetchone()[0]
+            routes = self._conn.execute(
+                "SELECT COUNT(DISTINCT origin||'-'||destination) FROM lowfares WHERE provider=?",
+                (provider,),
+            ).fetchone()[0]
+            nomarket = self._conn.execute(
+                "SELECT COUNT(*) FROM routes WHERE provider=? AND valid=0", (provider,)
+            ).fetchone()[0]
+            nonstop_yes, nonstop_no = self._conn.execute(
+                "SELECT "
+                "SUM(CASE WHEN nonstop=1 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN nonstop=0 THEN 1 ELSE 0 END) "
+                "FROM routes WHERE provider=?",
+                (provider,),
+            ).fetchone()
+        return rows, routes, nomarket, nonstop_yes, nonstop_no
+
+    def close(self) -> None:
+        self._conn.close()
 
 
 class Crawler:
@@ -34,9 +176,7 @@ class Crawler:
         self.db_path = db_path
         self.workers = workers
 
-        self._db_lock = threading.Lock()
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        storage.init_db(self._conn)
+        self.store = CrawlStore(db_path)
 
         self.stat_rows = 0
         self.stat_windows = 0
@@ -51,12 +191,7 @@ class Crawler:
 
     def build_us_routes(self, origins: Optional[Iterable[str]] = None) -> list[tuple[str, str]]:
         origin_airports = self.provider.origins()
-        with self._db_lock:
-            self._conn.executemany(
-                storage.insert_sql("airports", storage.AIRPORT_COLUMNS, mode="INSERT OR REPLACE"),
-                [storage.airport_row(a) for a in origin_airports],
-            )
-            self._conn.commit()
+        self.store.upsert_airports(origin_airports, mode="INSERT OR REPLACE")
 
         us_origins = (
             list(origins) if origins else [a.code for a in origin_airports if a.is_domestic_us]
@@ -65,20 +200,9 @@ class Crawler:
         prov = self.provider.name
         for i, o in enumerate(us_origins, 1):
             dests = [d for d in self.provider.destinations(o) if d.country_code == "US"]
-            with self._db_lock:
-                self._conn.executemany(
-                    storage.insert_sql(
-                        "airports", storage.AIRPORT_COLUMNS, mode="INSERT OR IGNORE"
-                    ),
-                    [storage.airport_row(d) for d in dests],
-                )
-                self._conn.executemany(
-                    storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR IGNORE"),
-                    [(prov, o, d.code, None, None, None) for d in dests],
-                )
-                self._conn.commit()
+            self.store.add_destinations(prov, o, dests)
             pairs.extend((o, d.code) for d in dests)
-            print(f"  routes: [{i}/{len(us_origins)}] {o} -> {len(dests)} US dests", flush=True)
+            logger.info("  routes: [%d/%d] %s -> %d US dests", i, len(us_origins), o, len(dests))
         return pairs
 
     # ------------------------------------------------------------------ #
@@ -94,31 +218,14 @@ class Crawler:
 
     def _done_windows(self) -> dict[tuple[str, str, str], str]:
         """Map (origin, dest, window_begin) -> the window_end already covered."""
-        with self._db_lock:
-            rows = self._conn.execute(
-                "SELECT origin, destination, window_begin, window_end FROM crawl_windows "
-                "WHERE provider=? AND status='done'",
-                (self.provider.name,),
-            ).fetchall()
-        return {(o, d, wb): we for (o, d, wb, we) in rows}
+        return self.store.done_windows(self.provider.name)
 
     def _invalid_markets(self) -> set[tuple[str, str]]:
-        with self._db_lock:
-            rows = self._conn.execute(
-                "SELECT origin, destination FROM routes WHERE provider=? AND valid=0",
-                (self.provider.name,),
-            ).fetchall()
-        return set(rows)
+        return self.store.invalid_markets(self.provider.name)
 
     def _probed_markets(self) -> set[tuple[str, str]]:
         """Markets whose nonstop status is already known (skip on resume)."""
-        with self._db_lock:
-            rows = self._conn.execute(
-                "SELECT origin, destination FROM routes "
-                "WHERE provider=? AND nonstop IS NOT NULL",
-                (self.provider.name,),
-            ).fetchall()
-        return set(rows)
+        return self.store.probed_markets(self.provider.name)
 
     # ------------------------------------------------------------------ #
     # nonstop probe                                                      #
@@ -157,13 +264,7 @@ class Crawler:
         if nonstop is None:
             return  # leave NULL (unknown) so a later run re-probes it
         now = _dt.datetime.now(_dt.UTC).isoformat()
-        prov = self.provider.name
-        with self._db_lock:
-            self._conn.execute(
-                storage.ROUTE_NONSTOP_UPSERT_SQL,
-                (prov, origin, dest, None, now, nonstop),
-            )
-            self._conn.commit()
+        self.store.upsert_nonstop(self.provider.name, origin, dest, now, nonstop)
         if nonstop:
             self.stat_nonstop_yes += 1
         else:
@@ -175,14 +276,15 @@ class Crawler:
         probed = self._probed_markets()
         todo = [(o, d) for (o, d) in pairs if (o, d) not in invalid and (o, d) not in probed]
         if not todo:
-            print("\nNonstop probe: nothing to do (all markets already probed).", flush=True)
+            logger.info("\nNonstop probe: nothing to do (all markets already probed).")
             return
         sample_dates = self._sample_dates(begin, end)
         total = len(todo)
-        print(
-            f"\nProbing nonstop service for {total} market(s) on "
-            f"{len(sample_dates)} sample date(s) ({', '.join(sample_dates)})...",
-            flush=True,
+        logger.info(
+            "\nProbing nonstop service for %d market(s) on %d sample date(s) (%s)...",
+            total,
+            len(sample_dates),
+            ", ".join(sample_dates),
         )
         start = time.time()
         completed = 0
@@ -197,18 +299,19 @@ class Crawler:
                         elapsed = time.time() - start
                         rate = completed / elapsed if elapsed else 0
                         eta = (total - completed) / rate if rate else 0
-                        print(
-                            f"  nonstop {completed}/{total} ({completed*100//total}%) | "
-                            f"{rate:.1f}/s | yes={self.stat_nonstop_yes} "
-                            f"no={self.stat_nonstop_no} | ETA {_fmt(eta)}",
-                            flush=True,
+                        logger.info(
+                            "  nonstop %d/%d (%d%%) | %.1f/s | yes=%d no=%d | ETA %s",
+                            completed,
+                            total,
+                            completed * 100 // total,
+                            rate,
+                            self.stat_nonstop_yes,
+                            self.stat_nonstop_no,
+                            _fmt(eta),
                         )
             except KeyboardInterrupt:
                 ex.shutdown(wait=False, cancel_futures=True)
-                print(
-                    "\nNonstop probe interrupted - progress saved. Re-run to resume.",
-                    flush=True,
-                )
+                logger.info("\nNonstop probe interrupted - progress saved. Re-run to resume.")
 
     # ------------------------------------------------------------------ #
     # worker + storage                                                   #
@@ -229,34 +332,16 @@ class Crawler:
         self, origin: str, dest: str, begin: _dt.date, end: _dt.date, status: str, fares: list
     ) -> None:
         now = _dt.datetime.now(_dt.UTC).isoformat()
-        prov = self.provider.name
-        with self._db_lock:
-            if status == "ok":
-                self._conn.executemany(
-                    storage.insert_sql(
-                        "lowfares", storage.LOWFARE_COLUMNS, mode="INSERT OR REPLACE"
-                    ),
-                    [storage.lowfare_row(prov, f, now) for f in fares],
-                )
-                self.stat_rows += len(fares)
-                self.stat_windows += 1
-            elif status == "nomarket":
-                self._conn.execute(
-                    storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR REPLACE"),
-                    (prov, origin, dest, 0, now, None),
-                )
-                self.stat_nomarket += 1
-            else:
-                self.stat_errors += 1
-
-            win_status = "done" if status in ("ok", "nomarket") else "error"
-            self._conn.execute(
-                storage.insert_sql(
-                    "crawl_windows", storage.CRAWL_WINDOW_COLUMNS, mode="INSERT OR REPLACE"
-                ),
-                (prov, origin, dest, begin.isoformat(), end.isoformat(), win_status, now),
-            )
-            self._conn.commit()
+        stored = self.store.record_window_result(
+            self.provider.name, origin, dest, begin, end, status, fares, now
+        )
+        if status == "ok":
+            self.stat_rows += stored
+            self.stat_windows += 1
+        elif status == "nomarket":
+            self.stat_nomarket += 1
+        else:
+            self.stat_errors += 1
 
     # ------------------------------------------------------------------ #
     # driver                                                             #
@@ -272,7 +357,7 @@ class Crawler:
         begin = _d(begin_date)
         end = _d(end_date)
         window_span = _dt.timedelta(days=self.provider.lowfare_window_days - 1)
-        print(f"[{self.provider.name}] Discovering US route network...", flush=True)
+        logger.info("[%s] Discovering US route network...", self.provider.name)
         pairs = self.build_us_routes(origins)
         windows = self._windows(begin, end)
         done = self._done_windows()
@@ -296,15 +381,21 @@ class Crawler:
                 tasks.append((o, d, w, window_end))
         total = len(tasks)
         already = len(pairs) * len(windows) - total
-        print(
-            f"\nRoutes: {len(pairs)} | windows/route: {len(windows)} ({begin} .. {end})\n"
-            f"Tasks to do: {total} ({already} already done/skipped) | Workers: {self.workers}",
-            flush=True,
+        logger.info(
+            "\nRoutes: %d | windows/route: %d (%s .. %s)\n"
+            "Tasks to do: %d (%d already done/skipped) | Workers: %d",
+            len(pairs),
+            len(windows),
+            begin,
+            end,
+            total,
+            already,
+            self.workers,
         )
 
         interrupted = False
         if total == 0:
-            print("Nothing to do - low-fare crawl already complete for this range.")
+            logger.info("Nothing to do - low-fare crawl already complete for this range.")
         else:
             start = time.time()
             completed = 0
@@ -322,21 +413,24 @@ class Crawler:
                             elapsed = time.time() - start
                             rate = completed / elapsed if elapsed else 0
                             eta = (total - completed) / rate if rate else 0
-                            print(
-                                f"  {completed}/{total} ({completed*100//total}%) | "
-                                f"{rate:.1f} win/s | rows={self.stat_rows} "
-                                f"nomarket={self.stat_nomarket} err={self.stat_errors} | "
-                                f"ETA {_fmt(eta)}",
-                                flush=True,
+                            logger.info(
+                                "  %d/%d (%d%%) | %.1f win/s | rows=%d nomarket=%d err=%d | ETA %s",
+                                completed,
+                                total,
+                                completed * 100 // total,
+                                rate,
+                                self.stat_rows,
+                                self.stat_nomarket,
+                                self.stat_errors,
+                                _fmt(eta),
                             )
                 except KeyboardInterrupt:
                     # Cancel queued (not-yet-started) work so we stop promptly rather
                     # than draining the whole queue on context-manager exit.
                     interrupted = True
                     ex.shutdown(wait=False, cancel_futures=True)
-                    print(
-                        "\nInterrupted - progress saved. Re-run the same command to resume.",
-                        flush=True,
+                    logger.info(
+                        "\nInterrupted - progress saved. Re-run the same command to resume."
                     )
 
         # Nonstop probe runs after the low-fare pass so it can skip markets the
@@ -347,38 +441,25 @@ class Crawler:
         self._report()
 
     def _report(self) -> None:
-        with self._db_lock:
-            rows = self._conn.execute(
-                "SELECT COUNT(*) FROM lowfares WHERE provider=?", (self.provider.name,)
-            ).fetchone()[0]
-            routes = self._conn.execute(
-                "SELECT COUNT(DISTINCT origin||'-'||destination) FROM lowfares WHERE provider=?",
-                (self.provider.name,),
-            ).fetchone()[0]
-            nomarket = self._conn.execute(
-                "SELECT COUNT(*) FROM routes WHERE provider=? AND valid=0", (self.provider.name,)
-            ).fetchone()[0]
-            nonstop_yes, nonstop_no = self._conn.execute(
-                "SELECT "
-                "SUM(CASE WHEN nonstop=1 THEN 1 ELSE 0 END), "
-                "SUM(CASE WHEN nonstop=0 THEN 1 ELSE 0 END) "
-                "FROM routes WHERE provider=?",
-                (self.provider.name,),
-            ).fetchone()
-        print(
-            f"\nDataset: {rows} fare-rows across {routes} routes "
-            f"({nomarket} invalid markets skipped) -> {self.db_path}",
-            flush=True,
+        rows, routes, nomarket, nonstop_yes, nonstop_no = self.store.report_counts(
+            self.provider.name
+        )
+        logger.info(
+            "\nDataset: %d fare-rows across %d routes (%d invalid markets skipped) -> %s",
+            rows,
+            routes,
+            nomarket,
+            self.db_path,
         )
         if nonstop_yes or nonstop_no:
-            print(
-                f"Nonstop service: {nonstop_yes or 0} market(s) nonstop, "
-                f"{nonstop_no or 0} connecting-only.",
-                flush=True,
+            logger.info(
+                "Nonstop service: %d market(s) nonstop, %d connecting-only.",
+                nonstop_yes or 0,
+                nonstop_no or 0,
             )
 
     def close(self) -> None:
-        self._conn.close()
+        self.store.close()
 
 
 def _d(s: str) -> _dt.date:
