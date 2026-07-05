@@ -18,34 +18,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Iterable, Optional
 
+from . import storage
 from .errors import MarketNotFoundError, ProviderError
 from .provider import BaseProvider
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS airports (
-    code TEXT PRIMARY KEY, city TEXT, full_name TEXT,
-    country_code TEXT, country_name TEXT, state_code TEXT, lat TEXT, long TEXT
-);
-CREATE TABLE IF NOT EXISTS routes (
-    provider TEXT, origin TEXT, destination TEXT, valid INTEGER, last_checked TEXT,
-    nonstop INTEGER,
-    PRIMARY KEY (provider, origin, destination)
-);
-CREATE TABLE IF NOT EXISTS lowfares (
-    provider TEXT, origin TEXT, destination TEXT, date TEXT,
-    standard_fare REAL, discounted_fare REAL, saver_fare REAL,
-    miles INTEGER, miles_fees REAL, currency TEXT, scraped_at TEXT,
-    PRIMARY KEY (provider, origin, destination, date)
-);
-CREATE TABLE IF NOT EXISTS crawl_windows (
-    provider TEXT, origin TEXT, destination TEXT, window_begin TEXT,
-    window_end TEXT, status TEXT, scraped_at TEXT,
-    PRIMARY KEY (provider, origin, destination, window_begin)
-);
-CREATE TABLE IF NOT EXISTS crawl_meta (key TEXT PRIMARY KEY, value TEXT);
-CREATE INDEX IF NOT EXISTS idx_lowfares_date ON lowfares(date);
-CREATE INDEX IF NOT EXISTS idx_lowfares_route ON lowfares(provider, origin, destination);
-"""
 
 
 class Crawler:
@@ -61,9 +36,7 @@ class Crawler:
 
         self._db_lock = threading.Lock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.executescript(_SCHEMA)
-        self._migrate()
-        self._conn.commit()
+        storage.init_db(self._conn)
 
         self.stat_rows = 0
         self.stat_windows = 0
@@ -71,12 +44,6 @@ class Crawler:
         self.stat_errors = 0
         self.stat_nonstop_yes = 0
         self.stat_nonstop_no = 0
-
-    def _migrate(self) -> None:
-        """Bring an older DB up to the current schema (additive only)."""
-        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(routes)").fetchall()}
-        if "nonstop" not in cols:
-            self._conn.execute("ALTER TABLE routes ADD COLUMN nonstop INTEGER")
 
     # ------------------------------------------------------------------ #
     # reference data                                                     #
@@ -86,22 +53,8 @@ class Crawler:
         origin_airports = self.provider.origins()
         with self._db_lock:
             self._conn.executemany(
-                "INSERT OR REPLACE INTO airports "
-                "(code, city, full_name, country_code, country_name, state_code, lat, long) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                [
-                    (
-                        a.code,
-                        a.city,
-                        a.full_name,
-                        a.country_code,
-                        a.country_name,
-                        a.state_code,
-                        a.lat,
-                        a.long,
-                    )
-                    for a in origin_airports
-                ],
+                storage.insert_sql("airports", storage.AIRPORT_COLUMNS, mode="INSERT OR REPLACE"),
+                [storage.airport_row(a) for a in origin_airports],
             )
             self._conn.commit()
 
@@ -114,28 +67,14 @@ class Crawler:
             dests = [d for d in self.provider.destinations(o) if d.country_code == "US"]
             with self._db_lock:
                 self._conn.executemany(
-                    "INSERT OR IGNORE INTO airports "
-                    "(code, city, full_name, country_code, country_name, state_code, lat, long) "
-                    "VALUES (?,?,?,?,?,?,?,?)",
-                    [
-                        (
-                            d.code,
-                            d.city,
-                            d.full_name,
-                            d.country_code,
-                            d.country_name,
-                            d.state_code,
-                            d.lat,
-                            d.long,
-                        )
-                        for d in dests
-                    ],
+                    storage.insert_sql(
+                        "airports", storage.AIRPORT_COLUMNS, mode="INSERT OR IGNORE"
+                    ),
+                    [storage.airport_row(d) for d in dests],
                 )
                 self._conn.executemany(
-                    "INSERT OR IGNORE INTO routes "
-                    "(provider, origin, destination, valid, last_checked) "
-                    "VALUES (?,?,?,NULL,NULL)",
-                    [(prov, o, d.code) for d in dests],
+                    storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR IGNORE"),
+                    [(prov, o, d.code, None, None, None) for d in dests],
                 )
                 self._conn.commit()
             pairs.extend((o, d.code) for d in dests)
@@ -221,11 +160,8 @@ class Crawler:
         prov = self.provider.name
         with self._db_lock:
             self._conn.execute(
-                "INSERT INTO routes (provider,origin,destination,valid,last_checked,nonstop) "
-                "VALUES (?,?,?,NULL,?,?) "
-                "ON CONFLICT(provider,origin,destination) "
-                "DO UPDATE SET nonstop=excluded.nonstop, last_checked=excluded.last_checked",
-                (prov, origin, dest, now, nonstop),
+                storage.ROUTE_NONSTOP_UPSERT_SQL,
+                (prov, origin, dest, None, now, nonstop),
             )
             self._conn.commit()
         if nonstop:
@@ -297,34 +233,17 @@ class Crawler:
         with self._db_lock:
             if status == "ok":
                 self._conn.executemany(
-                    "INSERT OR REPLACE INTO lowfares "
-                    "(provider,origin,destination,date,standard_fare,discounted_fare,saver_fare,"
-                    "miles,miles_fees,currency,scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    [
-                        (
-                            prov,
-                            f.origin,
-                            f.destination,
-                            f.date,
-                            f.standard_fare,
-                            f.discounted_fare,
-                            f.saver_fare,
-                            f.miles,
-                            f.miles_fees,
-                            f.currency,
-                            now,
-                        )
-                        for f in fares
-                    ],
+                    storage.insert_sql(
+                        "lowfares", storage.LOWFARE_COLUMNS, mode="INSERT OR REPLACE"
+                    ),
+                    [storage.lowfare_row(prov, f, now) for f in fares],
                 )
                 self.stat_rows += len(fares)
                 self.stat_windows += 1
             elif status == "nomarket":
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO routes "
-                    "(provider,origin,destination,valid,last_checked) "
-                    "VALUES (?,?,?,0,?)",
-                    (prov, origin, dest, now),
+                    storage.insert_sql("routes", storage.ROUTE_COLUMNS, mode="INSERT OR REPLACE"),
+                    (prov, origin, dest, 0, now, None),
                 )
                 self.stat_nomarket += 1
             else:
@@ -332,9 +251,9 @@ class Crawler:
 
             win_status = "done" if status in ("ok", "nomarket") else "error"
             self._conn.execute(
-                "INSERT OR REPLACE INTO crawl_windows "
-                "(provider,origin,destination,window_begin,window_end,status,scraped_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+                storage.insert_sql(
+                    "crawl_windows", storage.CRAWL_WINDOW_COLUMNS, mode="INSERT OR REPLACE"
+                ),
                 (prov, origin, dest, begin.isoformat(), end.isoformat(), win_status, now),
             )
             self._conn.commit()

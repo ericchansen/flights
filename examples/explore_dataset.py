@@ -9,8 +9,13 @@ column and cash tiers standard_fare / discounted_fare / saver_fare).
 """
 
 import csv
+import os
 import sqlite3
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+from flights.core import storage  # noqa: E402  (after the sys.path bootstrap above)
 
 
 def main(db_path: str = "flights.db") -> None:
@@ -25,9 +30,7 @@ def main(db_path: str = "flights.db") -> None:
     providers = [r[0] for r in q("SELECT DISTINCT provider FROM lowfares").fetchall()]
 
     # cheapest of the cash tiers, per row
-    cheapest = (
-        "MIN(COALESCE(standard_fare,1e9), COALESCE(discounted_fare,1e9), COALESCE(saver_fare,1e9))"
-    )
+    cheapest = storage.CHEAPEST_CASH_SQL
 
     print("=== Flight low-fare dataset ===")
     print(f"  providers   : {', '.join(providers)}")
