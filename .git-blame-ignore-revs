@@ -1,0 +1,7 @@
+# Revisions to ignore in `git blame` (bulk reformatting, no logic changes).
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub uses this file automatically.
+
+# build: adopt Python 3.12+ and Black/Ruff/mypy/pytest toolchain (Black reformat)
+5b471790529d32e971c3eeff99343416a3a06c60
