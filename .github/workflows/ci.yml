@@ -1,8 +1,10 @@
 name: CI
 
-# Python quality gate: format (Black), lint (Ruff), type-check (mypy) and the
-# offline test-suite (pytest) across the supported Python versions. All tests
-# mock provider HTTP, so nothing here touches a live airline backend.
+# Quality gates. The `quality` job runs the Python gate — format (Black), lint
+# (Ruff), type-check (mypy) and the offline test-suite (pytest) across supported
+# Python versions. The `web` job runs the front-end gate — ESLint, Prettier and
+# the Vitest unit tests for web/. All tests mock provider HTTP, so nothing here
+# touches a live airline backend.
 
 on:
   push:
@@ -51,3 +53,31 @@ jobs:
 
       - name: pytest
         run: pytest
+
+  web:
+    runs-on: ubuntu-latest
+    name: Web (lint + test)
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: Prettier (format check)
+        run: npm run format
+
+      - name: Vitest
+        run: npm test
