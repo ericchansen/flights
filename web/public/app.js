@@ -3,18 +3,19 @@
    Deal-discovery map over the crawled low-fare dataset. Pick a home airport,
    see the cheapest destinations mapped and ranked. Fully client-side.
    ========================================================================== */
+import { findTrips } from "./trips.js";
+import {
+  fmtMoneyRound, fmtMoneyExact, fmtMiles, fmtDate,
+  countryTag, escapeHtml, highlight,
+} from "./format.js";
+import { metricArrayFor, bestInWindow } from "./fares.js";
+
 (function () {
   "use strict";
 
   // Fare ramp (cheap -> pricey). Mirrors --fare-1..6 in DESIGN.md / styles.css.
   const FARE_COLORS = ["#0fb39a", "#43b04a", "#9bbf30", "#e0a800", "#ef7d1a", "#dc3d43"];
   const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  const COUNTRY_NAME = {
-    US: "United States", MX: "Mexico", PR: "Puerto Rico", DO: "Dominican Republic",
-    JM: "Jamaica", CR: "Costa Rica", GT: "Guatemala", HN: "Honduras",
-    SV: "El Salvador", SX: "Sint Maarten", CA: "Canada",
-  };
 
   const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -86,42 +87,19 @@
   let projection, geoPath, zoom, dims = { w: 0, h: 0 }, currentK = 1;
 
   /* ------------------------------------------------------------------ utils */
-  const fmtMoneyRound = (v) => "$" + Math.round(v).toLocaleString("en-US");
-  const fmtMoneyExact = (v) =>
-    "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtMiles = (v) => v.toLocaleString("en-US") + " mi";
-  const parseDate = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
-  const fmtDate = (s) => parseDate(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  // Flag emoji don't render on Windows; use a compact country-code tag instead.
-  // Domestic US is the common case, so we omit it to keep rows quiet.
-  const countryTag = (cc) =>
-    (!cc || cc === "US") ? "" : `<span class="cc-tag" title="${escapeHtml(COUNTRY_NAME[cc] || cc)}">${escapeHtml(cc)}</span>`;
-
-  function metricValue(route, i) {
-    return state.metric === "cash" ? route.cashByDate[i] : route.milesByDate[i];
-  }
+  // Presentation + fare-selection helpers live in ./format.js and ./fares.js
+  // (imported above). The thin wrappers below bind them to the live app state.
 
   // cheapest value within the current date window + its date index
   function windowBest(route) {
     const [lo, hi] = state.range;
-    let best = Infinity, bi = -1;
-    for (let i = lo; i <= hi; i++) {
-      const v = metricValue(route, i);
-      if (v != null && v < best) { best = v; bi = i; }
-    }
-    return bi === -1 ? null : { value: best, dateIdx: bi };
+    return bestInWindow(metricArrayFor(route, state.metric), lo, hi);
   }
 
   // cheapest of the *other* metric within window (for the detail alt line)
   function windowBestOf(route, metric) {
     const [lo, hi] = state.range;
-    const arr = metric === "cash" ? route.cashByDate : route.milesByDate;
-    let best = Infinity, bi = -1;
-    for (let i = lo; i <= hi; i++) {
-      const v = arr[i];
-      if (v != null && v < best) { best = v; bi = i; }
-    }
-    return bi === -1 ? null : { value: best, dateIdx: bi };
+    return bestInWindow(metricArrayFor(route, metric), lo, hi);
   }
 
   /* ------------------------------------------------------------- data load */
@@ -914,7 +892,6 @@
       renderTripList(); renderPlanSummary(); clearTripLayers();
       return;
     }
-    if (!window.Trips) { console.error("trips.js not loaded"); return; }
     const params = {
       home: state.origin,
       metric: state.metric,
@@ -928,7 +905,7 @@
       rangeEnd: state.range[1],
       limit: 60,
     };
-    const res = window.Trips.findTrips(
+    const res = findTrips(
       { routesByPair: state.routesByPair, dates: state.dates }, params);
     state.trips = res.trips;
     state.planTruncated = res.truncated;
@@ -1159,12 +1136,5 @@
   /* ------------------------------------------------------------------ misc */
   function debounce(fn, ms) {
     let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
-  }
-  function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
-  function highlight(text, q) {
-    if (!q) return escapeHtml(text);
-    const i = text.toLowerCase().indexOf(q);
-    if (i < 0) return escapeHtml(text);
-    return escapeHtml(text.slice(0, i)) + "<mark>" + escapeHtml(text.slice(i, i + q.length)) + "</mark>" + escapeHtml(text.slice(i + q.length));
   }
 })();
