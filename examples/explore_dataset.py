@@ -18,12 +18,16 @@ def main(db_path: str = "flights.db") -> None:
     q = conn.execute
 
     total = q("SELECT COUNT(*) FROM lowfares").fetchone()[0]
-    routes = q("SELECT COUNT(DISTINCT provider||'|'||origin||'-'||destination) FROM lowfares").fetchone()[0]
+    routes = q(
+        "SELECT COUNT(DISTINCT provider||'|'||origin||'-'||destination) FROM lowfares"
+    ).fetchone()[0]
     lo, hi = q("SELECT MIN(date), MAX(date) FROM lowfares").fetchone()
     providers = [r[0] for r in q("SELECT DISTINCT provider FROM lowfares").fetchall()]
 
     # cheapest of the cash tiers, per row
-    cheapest = "MIN(COALESCE(standard_fare,1e9), COALESCE(discounted_fare,1e9), COALESCE(saver_fare,1e9))"
+    cheapest = (
+        "MIN(COALESCE(standard_fare,1e9), COALESCE(discounted_fare,1e9), COALESCE(saver_fare,1e9))"
+    )
 
     print("=== Flight low-fare dataset ===")
     print(f"  providers   : {', '.join(providers)}")

@@ -30,7 +30,6 @@ from .core import (
     get_provider,
 )
 
-
 # --------------------------------------------------------------------------- #
 # output sinks                                                                #
 # --------------------------------------------------------------------------- #
@@ -97,13 +96,25 @@ def cmd_routes(provider: BaseProvider, args) -> None:
     for i, o in enumerate(origins, 1):
         dests = provider.destinations(o)
         for d in dests:
-            rows.append({"provider": provider.name, "origin": o, "destination": d.code,
-                         "dest_city": d.city, "dest_country": d.country_code})
+            rows.append(
+                {
+                    "provider": provider.name,
+                    "origin": o,
+                    "destination": d.code,
+                    "dest_city": d.city,
+                    "dest_country": d.country_code,
+                }
+            )
         _log(f"  [{i}/{len(origins)}] {o}: {len(dests)} destinations")
     # Use a distinct table name so this route-map export never collides with the
     # crawler's `routes` market-validity cache when writing into a shared DB.
-    _emit(rows, ["provider", "origin", "destination", "dest_city", "dest_country"],
-          args.out, args.db, "route_map")
+    _emit(
+        rows,
+        ["provider", "origin", "destination", "dest_city", "dest_country"],
+        args.out,
+        args.db,
+        "route_map",
+    )
 
 
 def cmd_lowfares(provider: BaseProvider, args) -> None:
@@ -113,8 +124,10 @@ def cmd_lowfares(provider: BaseProvider, args) -> None:
     header = _header(DayFare)
     nonstop = getattr(args, "nonstop", False)
     sample_dates = _sample_dates(begin, end) if nonstop else []
-    _log(f"[{provider.name}] Low-fare calendar: {len(pairs)} route(s), {begin}..{end}"
-         f"{' (nonstop markets only)' if nonstop else ''}")
+    _log(
+        f"[{provider.name}] Low-fare calendar: {len(pairs)} route(s), {begin}..{end}"
+        f"{' (nonstop markets only)' if nonstop else ''}"
+    )
     all_rows = []
     for i, (o, d) in enumerate(pairs, 1):
         if nonstop and not _market_has_nonstop(provider, o, d, sample_dates):
@@ -126,11 +139,15 @@ def cmd_lowfares(provider: BaseProvider, args) -> None:
             _log(f"  [{i}/{len(pairs)}] {o}-{d}: ERROR {exc}")
             continue
         rows = [asdict(f) for f in fares]
-        rows = _apply_filters(rows, args, cash_keys=("standard_fare", "discounted_fare", "saver_fare"),
-                              miles_key="miles")
+        rows = _apply_filters(
+            rows,
+            args,
+            cash_keys=("standard_fare", "discounted_fare", "saver_fare"),
+            miles_key="miles",
+        )
         all_rows.extend(rows)
         _log(f"  [{i}/{len(pairs)}] {o}-{d}: {len(rows)} day(s) kept")
-    all_rows.sort(key=lambda r: _cheapest(r) if _cheapest(r) is not None else 1e9)
+    all_rows.sort(key=lambda r: c if (c := _cheapest(r)) is not None else 1e9)
     _emit(all_rows, header, args.out, args.db, "lowfares")
 
 
@@ -138,10 +155,12 @@ def cmd_flights(provider: BaseProvider, args) -> None:
     pairs = _resolve_pairs(provider, args)
     dates = _split(args.date) if args.date else [_dt.date.today().isoformat()]
     header = _header(Flight)
-    _log(f"[{provider.name}] Flights: {len(pairs)} route(s) x {len(dates)} date(s)"
-         f"{' (nonstop)' if args.nonstop else ''}")
+    _log(
+        f"[{provider.name}] Flights: {len(pairs)} route(s) x {len(dates)} date(s)"
+        f"{' (nonstop)' if args.nonstop else ''}"
+    )
     all_rows, n, total = [], 0, len(pairs) * len(dates)
-    for (o, d) in pairs:
+    for o, d in pairs:
         for date in dates:
             n += 1
             try:
@@ -150,11 +169,15 @@ def cmd_flights(provider: BaseProvider, args) -> None:
                 _log(f"  [{n}/{total}] {o}-{d} {date}: ERROR {exc}")
                 continue
             rows = [asdict(f) for f in flights]
-            rows = _apply_filters(rows, args, cash_keys=("standard_fare", "discounted_fare", "saver_fare"),
-                                  miles_key="miles")
+            rows = _apply_filters(
+                rows,
+                args,
+                cash_keys=("standard_fare", "discounted_fare", "saver_fare"),
+                miles_key="miles",
+            )
             all_rows.extend(rows)
             _log(f"  [{n}/{total}] {o}-{d} {date}: {len(rows)} flight(s)")
-    all_rows.sort(key=lambda r: _cheapest(r) if _cheapest(r) is not None else 1e9)
+    all_rows.sort(key=lambda r: c if (c := _cheapest(r)) is not None else 1e9)
     _emit(all_rows, header, args.out, args.db, "flights")
 
 
@@ -164,8 +187,12 @@ def cmd_crawl(provider: BaseProvider, args) -> None:
     origins = _split(args.origins) if args.origins else None
     crawler = Crawler(provider, db_path=args.db, workers=args.workers)
     try:
-        crawler.crawl(begin, end, origins=origins,
-                      probe_nonstop=not getattr(args, "skip_nonstop_probe", False))
+        crawler.crawl(
+            begin,
+            end,
+            origins=origins,
+            probe_nonstop=not getattr(args, "skip_nonstop_probe", False),
+        )
     finally:
         crawler.close()
 
@@ -183,10 +210,10 @@ def _d(s: str) -> _dt.date:
     return _dt.datetime.strptime(s[:10], "%Y-%m-%d").date()
 
 
-def _cheapest(row: dict):
+def _cheapest(row: dict) -> float | None:
     vals = [row.get(k) for k in ("standard_fare", "discounted_fare", "saver_fare")]
-    vals = [v for v in vals if v is not None]
-    return min(vals) if vals else None
+    nums = [float(v) for v in vals if v is not None]
+    return min(nums) if nums else None
 
 
 def _sample_dates(begin: str, end: str) -> list[str]:
@@ -238,7 +265,9 @@ def _resolve_pairs(provider: BaseProvider, args) -> list[tuple[str, str]]:
             dests = _split(args.destinations)
             return [(o, d) for o in origins for d in dests]
         return [(o, dd.code) for o in origins for dd in provider.destinations(o)]
-    raise SystemExit("Specify --routes ORIG-DEST,... or --origins CODE,... [--destinations CODE,...]")
+    raise SystemExit(
+        "Specify --routes ORIG-DEST,... or --origins CODE,... [--destinations CODE,...]"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -267,7 +296,9 @@ def _add_common_args(parser: argparse.ArgumentParser, suppress: bool) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="flights", description="Scrape airline flight availability (cash + miles).")
+    p = argparse.ArgumentParser(
+        prog="flights", description="Scrape airline flight availability (cash + miles)."
+    )
     _add_common_args(p, suppress=False)
 
     # A parent parser lets the same global options be accepted *after* the
@@ -279,35 +310,52 @@ def build_parser() -> argparse.ArgumentParser:
 
     pr = sub.add_parser("routes", parents=[common], help="Dump the origin->destination route map.")
     pr.add_argument("--origins", help="Comma list of origins (default: all US).")
-    pr.add_argument("--out"); pr.add_argument("--db")
+    pr.add_argument("--out")
+    pr.add_argument("--db")
     pr.set_defaults(func=cmd_routes)
 
-    pl = sub.add_parser("lowfares", parents=[common], help="Per-day cheapest fares + miles (calendar).")
+    pl = sub.add_parser(
+        "lowfares", parents=[common], help="Per-day cheapest fares + miles (calendar)."
+    )
     _route_args(pl)
-    pl.add_argument("--begin"); pl.add_argument("--end")
+    pl.add_argument("--begin")
+    pl.add_argument("--end")
     pl.add_argument("--days", type=int, default=30)
-    pl.add_argument("--nonstop", action="store_true",
-                    help="Only include markets that offer nonstop (continuous) service.")
-    pl.add_argument("--max-price", type=float); pl.add_argument("--max-miles", type=int)
-    pl.add_argument("--out"); pl.add_argument("--db")
+    pl.add_argument(
+        "--nonstop",
+        action="store_true",
+        help="Only include markets that offer nonstop (continuous) service.",
+    )
+    pl.add_argument("--max-price", type=float)
+    pl.add_argument("--max-miles", type=int)
+    pl.add_argument("--out")
+    pl.add_argument("--db")
     pl.set_defaults(func=cmd_lowfares)
 
-    pf = sub.add_parser("flights", parents=[common], help="Individual flights (with stops) for dates.")
+    pf = sub.add_parser(
+        "flights", parents=[common], help="Individual flights (with stops) for dates."
+    )
     _route_args(pf)
     pf.add_argument("--date", help="Comma list of dates YYYY-MM-DD (default: today).")
     pf.add_argument("--nonstop", action="store_true")
-    pf.add_argument("--max-price", type=float); pf.add_argument("--max-miles", type=int)
-    pf.add_argument("--out"); pf.add_argument("--db")
+    pf.add_argument("--max-price", type=float)
+    pf.add_argument("--max-miles", type=int)
+    pf.add_argument("--out")
+    pf.add_argument("--db")
     pf.set_defaults(func=cmd_flights)
 
     pc = sub.add_parser("crawl", parents=[common], help="Network-wide resumable crawl into SQLite.")
     pc.add_argument("--db", required=True)
-    pc.add_argument("--begin"); pc.add_argument("--end")
+    pc.add_argument("--begin")
+    pc.add_argument("--end")
     pc.add_argument("--days", type=int, default=60)
     pc.add_argument("--origins", help="Comma list of US origins (default: all US).")
     pc.add_argument("--workers", type=int, default=8)
-    pc.add_argument("--skip-nonstop-probe", action="store_true",
-                    help="Skip the per-market nonstop-service probe pass.")
+    pc.add_argument(
+        "--skip-nonstop-probe",
+        action="store_true",
+        help="Skip the per-market nonstop-service probe pass.",
+    )
     pc.set_defaults(func=cmd_crawl)
     return p
 

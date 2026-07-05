@@ -72,9 +72,7 @@ class BaseProvider(abc.ABC):
         out: list[DayFare] = []
         cursor = start
         while cursor <= end:
-            window_end = min(
-                cursor + _dt.timedelta(days=self.lowfare_window_days - 1), end
-            )
+            window_end = min(cursor + _dt.timedelta(days=self.lowfare_window_days - 1), end)
             out.extend(self.lowfare_window(origin, destination, cursor, window_end))
             cursor = window_end + _dt.timedelta(days=1)
         return out
@@ -90,7 +88,7 @@ class BaseProvider(abc.ABC):
             for d in self.destinations(o):
                 yield (o, d.code)
 
-    def close(self) -> None:  # pragma: no cover - optional cleanup hook
+    def close(self) -> None:  # noqa: B027  # pragma: no cover - optional cleanup hook
         """Release any resources (sessions, sockets). Safe no-op by default."""
 
 

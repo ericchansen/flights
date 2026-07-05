@@ -89,12 +89,25 @@ class Crawler:
                 "INSERT OR REPLACE INTO airports "
                 "(code, city, full_name, country_code, country_name, state_code, lat, long) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                [(a.code, a.city, a.full_name, a.country_code, a.country_name,
-                  a.state_code, a.lat, a.long) for a in origin_airports],
+                [
+                    (
+                        a.code,
+                        a.city,
+                        a.full_name,
+                        a.country_code,
+                        a.country_name,
+                        a.state_code,
+                        a.lat,
+                        a.long,
+                    )
+                    for a in origin_airports
+                ],
             )
             self._conn.commit()
 
-        us_origins = list(origins) if origins else [a.code for a in origin_airports if a.is_domestic_us]
+        us_origins = (
+            list(origins) if origins else [a.code for a in origin_airports if a.is_domestic_us]
+        )
         pairs: list[tuple[str, str]] = []
         prov = self.provider.name
         for i, o in enumerate(us_origins, 1):
@@ -104,11 +117,23 @@ class Crawler:
                     "INSERT OR IGNORE INTO airports "
                     "(code, city, full_name, country_code, country_name, state_code, lat, long) "
                     "VALUES (?,?,?,?,?,?,?,?)",
-                    [(d.code, d.city, d.full_name, d.country_code, d.country_name,
-                      d.state_code, d.lat, d.long) for d in dests],
+                    [
+                        (
+                            d.code,
+                            d.city,
+                            d.full_name,
+                            d.country_code,
+                            d.country_name,
+                            d.state_code,
+                            d.lat,
+                            d.long,
+                        )
+                        for d in dests
+                    ],
                 )
                 self._conn.executemany(
-                    "INSERT OR IGNORE INTO routes (provider, origin, destination, valid, last_checked) "
+                    "INSERT OR IGNORE INTO routes "
+                    "(provider, origin, destination, valid, last_checked) "
                     "VALUES (?,?,?,NULL,NULL)",
                     [(prov, o, d.code) for d in dests],
                 )
@@ -226,9 +251,7 @@ class Crawler:
         start = time.time()
         completed = 0
         with ThreadPoolExecutor(max_workers=self.workers) as ex:
-            futures = {
-                ex.submit(self._probe_one, o, d, sample_dates): (o, d) for (o, d) in todo
-            }
+            futures = {ex.submit(self._probe_one, o, d, sample_dates): (o, d) for (o, d) in todo}
             try:
                 for fut in as_completed(futures):
                     o, d = futures[fut]
@@ -266,8 +289,9 @@ class Crawler:
         except Exception:  # noqa: BLE001 - keep the crawl alive on unexpected errors
             return ("error", [])
 
-    def _store(self, origin: str, dest: str, begin: _dt.date, end: _dt.date,
-               status: str, fares: list) -> None:
+    def _store(
+        self, origin: str, dest: str, begin: _dt.date, end: _dt.date, status: str, fares: list
+    ) -> None:
         now = _dt.datetime.utcnow().isoformat()
         prov = self.provider.name
         with self._db_lock:
@@ -276,15 +300,29 @@ class Crawler:
                     "INSERT OR REPLACE INTO lowfares "
                     "(provider,origin,destination,date,standard_fare,discounted_fare,saver_fare,"
                     "miles,miles_fees,currency,scraped_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    [(prov, f.origin, f.destination, f.date, f.standard_fare,
-                      f.discounted_fare, f.saver_fare, f.miles, f.miles_fees,
-                      f.currency, now) for f in fares],
+                    [
+                        (
+                            prov,
+                            f.origin,
+                            f.destination,
+                            f.date,
+                            f.standard_fare,
+                            f.discounted_fare,
+                            f.saver_fare,
+                            f.miles,
+                            f.miles_fees,
+                            f.currency,
+                            now,
+                        )
+                        for f in fares
+                    ],
                 )
                 self.stat_rows += len(fares)
                 self.stat_windows += 1
             elif status == "nomarket":
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO routes (provider,origin,destination,valid,last_checked) "
+                    "INSERT OR REPLACE INTO routes "
+                    "(provider,origin,destination,valid,last_checked) "
                     "VALUES (?,?,?,0,?)",
                     (prov, origin, dest, now),
                 )
@@ -328,7 +366,7 @@ class Crawler:
         # extending the range later correctly re-fetches a formerly-capped
         # final window.
         tasks = []
-        for (o, d) in pairs:
+        for o, d in pairs:
             if (o, d) in invalid:
                 continue
             for w in windows:
@@ -353,8 +391,7 @@ class Crawler:
             completed = 0
             with ThreadPoolExecutor(max_workers=self.workers) as ex:
                 futures = {
-                    ex.submit(self._fetch, o, d, w, we): (o, d, w, we)
-                    for (o, d, w, we) in tasks
+                    ex.submit(self._fetch, o, d, w, we): (o, d, w, we) for (o, d, w, we) in tasks
                 }
                 try:
                     for fut in as_completed(futures):

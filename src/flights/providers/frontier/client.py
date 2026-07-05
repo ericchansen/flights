@@ -30,9 +30,7 @@ from ...core.provider import BaseProvider
 
 ENVIRONMENT_URL = "https://www2.flyfrontier.com/api/environment"
 DEFAULT_BFF_ENDPOINT = "https://mtier.flyfrontier.com/consumerappsbff/graphql"
-LOWFARE_URL = (
-    "https://mtier.flyfrontier.com/flightavailabilityssv/NFAvailabilityLowfareSearch"
-)
+LOWFARE_URL = "https://mtier.flyfrontier.com/flightavailabilityssv/NFAvailabilityLowfareSearch"
 DEFAULT_FARE_TYPES = ["TC", "R", "GW", "FC"]
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -159,7 +157,7 @@ class FrontierProvider(BaseProvider):
                 )
             except requests.RequestException as exc:
                 last = exc
-                time.sleep(min(2 ** attempt, 6))
+                time.sleep(min(2**attempt, 6))
                 continue
             if resp.status_code == 200:
                 data = resp.json()
@@ -177,14 +175,15 @@ class FrontierProvider(BaseProvider):
                 continue
             if resp.status_code >= 500:
                 last = ProviderError(f"HTTP {resp.status_code}: {resp.text[:200]}")
-                time.sleep(min(2 ** attempt, 6))
+                time.sleep(min(2**attempt, 6))
                 continue
             raise ProviderError(f"HTTP {resp.status_code}: {resp.text[:300]}")
         raise ProviderError(f"Request to {url} failed after {self.max_retries} tries: {last}")
 
     def _graphql(self, operation: str, query: str, variables: dict, with_token: bool) -> dict:
+        endpoint = self._bff_endpoint or DEFAULT_BFF_ENDPOINT
         return self._post(
-            self._bff_endpoint,
+            endpoint,
             {"operationName": operation, "variables": variables, "query": query},
             with_token=with_token,
         )
@@ -211,69 +210,117 @@ class FrontierProvider(BaseProvider):
 
     def origins(self) -> list[Airport]:
         data = self._graphql("UiOriginAirportListSetSingleton", _Q_ORIGINS, {}, with_token=False)
-        rows = (data.get("data", {}).get("uiOriginAirportListSetSingleton", {})
-                .get("getOriginData") or [])
+        rows = (
+            data.get("data", {}).get("uiOriginAirportListSetSingleton", {}).get("getOriginData")
+            or []
+        )
         return [_airport(r) for r in rows]
 
     def destinations(self, origin: str) -> list[Airport]:
         data = self._graphql(
-            "GetDestination", _Q_DESTINATIONS, {"input": {"originAirport": origin}}, with_token=False
+            "GetDestination",
+            _Q_DESTINATIONS,
+            {"input": {"originAirport": origin}},
+            with_token=False,
         )
-        rows = (data.get("data", {}).get("uiDestinationAirportListSetSingleton", {})
-                .get("getDestinationData") or [])
+        rows = (
+            data.get("data", {})
+            .get("uiDestinationAirportListSetSingleton", {})
+            .get("getDestinationData")
+            or []
+        )
         return [_airport(r) for r in rows]
 
     def lowfare_window(
         self, origin: str, destination: str, begin: _dt.date, end: _dt.date
     ) -> list[DayFare]:
         body = {
-            "BypassCache": True, "GetAllDetails": True, "IncludeTaxesAndFees": True,
-            "Passengers": {"Types": [{"Type": "ADT", "DiscountCode": "", "Count": 1}],
-                           "ResidentCountry": "US"},
+            "BypassCache": True,
+            "GetAllDetails": True,
+            "IncludeTaxesAndFees": True,
+            "Passengers": {
+                "Types": [{"Type": "ADT", "DiscountCode": "", "Count": 1}],
+                "ResidentCountry": "US",
+            },
             "Codes": {"Currency": self.currency, "SourceOrganization": None, "PromotionCode": None},
-            "Filters": {"GroupByDate": None, "FlightFilter": None, "Loyalty": None,
-                        "BookingClasses": None, "ProductClasses": None, "FareTypes": DEFAULT_FARE_TYPES},
-            "Criteria": [{"OriginStationCodes": [origin], "DestinationStationCodes": [destination],
-                          "BeginDate": begin.isoformat(), "EndDate": end.isoformat()}],
+            "Filters": {
+                "GroupByDate": None,
+                "FlightFilter": None,
+                "Loyalty": None,
+                "BookingClasses": None,
+                "ProductClasses": None,
+                "FareTypes": DEFAULT_FARE_TYPES,
+            },
+            "Criteria": [
+                {
+                    "OriginStationCodes": [origin],
+                    "DestinationStationCodes": [destination],
+                    "BeginDate": begin.isoformat(),
+                    "EndDate": end.isoformat(),
+                }
+            ],
         }
         data = self._post(LOWFARE_URL, body, with_token=True)
         results = (data.get("data") or {}).get("results") or {}
         rows = results.get(f"{origin}|{destination}") or []
         out = []
         for r in rows:
-            out.append(DayFare(
-                provider=self.name, origin=origin, destination=destination,
-                date=str(r.get("date", ""))[:10],
-                standard_fare=_f(r.get("standardFare")),
-                discounted_fare=_f(r.get("discountedFare")),
-                saver_fare=_f(r.get("gowildFare")),
-                miles=_i(r.get("totalMilesPoint")),
-                miles_fees=_f(r.get("milesTaxesAndFees")),
-                currency=self.currency,
-            ))
+            out.append(
+                DayFare(
+                    provider=self.name,
+                    origin=origin,
+                    destination=destination,
+                    date=str(r.get("date", ""))[:10],
+                    standard_fare=_f(r.get("standardFare")),
+                    discounted_fare=_f(r.get("discountedFare")),
+                    saver_fare=_f(r.get("gowildFare")),
+                    miles=_i(r.get("totalMilesPoint")),
+                    miles_fees=_f(r.get("milesTaxesAndFees")),
+                    currency=self.currency,
+                )
+            )
         return out
 
     def flights(
-        self, origin: str, destination: str, date: str,
-        nonstop_only: bool = False, adults: int = 1,
+        self,
+        origin: str,
+        destination: str,
+        date: str,
+        nonstop_only: bool = False,
+        adults: int = 1,
     ) -> list[Flight]:
-        variables = {"input": {
-            "authToken": self._ensure_token(), "origin": origin, "destination": destination,
-            "beginDate": f"{date[:10]}T00:00:00Z", "endDate": None,
-            "adultPassengerCount": adults, "childPassengerCount": 0,
-            "teenPassengerCount": 0, "infantWithSeatPassengerCount": 0, "promoCode": None,
-        }}
+        variables = {
+            "input": {
+                "authToken": self._ensure_token(),
+                "origin": origin,
+                "destination": destination,
+                "beginDate": f"{date[:10]}T00:00:00Z",
+                "endDate": None,
+                "adultPassengerCount": adults,
+                "childPassengerCount": 0,
+                "teenPassengerCount": 0,
+                "infantWithSeatPassengerCount": 0,
+                "promoCode": None,
+            }
+        }
         data = self._graphql("UpdateAvailability", _M_AVAILABILITY, variables, with_token=True)
-        trips = (data.get("data", {}).get("updateUiAvailabilitySetSingleton") or {}
-                 ).get("departureTrips") or []
+        trips = (data.get("data", {}).get("updateUiAvailabilitySetSingleton") or {}).get(
+            "departureTrips"
+        ) or []
         out = []
         for t in trips:
             fl = Flight(
-                provider=self.name, origin=origin, destination=destination, date=date[:10],
+                provider=self.name,
+                origin=origin,
+                destination=destination,
+                date=date[:10],
                 flight_number=str(t.get("flightNumber", "")),
-                depart_time=t.get("departTime", ""), arrive_time=t.get("arriveTime", ""),
-                aircraft=t.get("aircraftType"), stops=int(t.get("stops") or 0),
-                flight_type=t.get("flightType") or "", duration=t.get("totalFlightTime"),
+                depart_time=t.get("departTime", ""),
+                arrive_time=t.get("arriveTime", ""),
+                aircraft=t.get("aircraftType"),
+                stops=int(t.get("stops") or 0),
+                flight_type=t.get("flightType") or "",
+                duration=t.get("totalFlightTime"),
                 standard_fare=_key(t.get("standardFareAvailabilityKey")),
                 discounted_fare=_key(t.get("discountDenFareAvailabilityKey")),
                 saver_fare=_key(t.get("goWildFareAvailabilityKey")),
@@ -304,10 +351,14 @@ def _sync_body_token(payload: dict, token: str) -> None:
 
 def _airport(r: dict) -> Airport:
     return Airport(
-        code=r.get("code", ""), city=r.get("cityName", ""),
-        full_name=r.get("stationFullName", ""), country_code=r.get("countryCode", ""),
-        country_name=r.get("countryName", ""), state_code=r.get("stateCode"),
-        lat=r.get("lat"), long=r.get("long"),
+        code=r.get("code", ""),
+        city=r.get("cityName", ""),
+        full_name=r.get("stationFullName", ""),
+        country_code=r.get("countryCode", ""),
+        country_name=r.get("countryName", ""),
+        state_code=r.get("stateCode"),
+        lat=r.get("lat"),
+        long=r.get("long"),
     )
 
 
