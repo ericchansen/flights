@@ -23,7 +23,15 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone
+
+# Allow running as a standalone script (``python web/build_data.py``) without
+# installing the package: make ``src/`` importable, then pull the schema's
+# single source of truth so this exporter can never drift from the crawler.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
+
+from flights.core import storage  # noqa: E402  (after the sys.path bootstrap above)
 
 DEFAULT_DB = r"D:\flights-data\us_lowfares.db"
 
@@ -83,9 +91,7 @@ def main() -> None:
     date_index = {d: i for i, d in enumerate(dates)}
     n_dates = len(dates)
 
-    cheapest_expr = (
-        "MIN(COALESCE(standard_fare,1e9),COALESCE(discounted_fare,1e9)," "COALESCE(saver_fare,1e9))"
-    )
+    cheapest_expr = storage.CHEAPEST_CASH_SQL
 
     # --- airports (parse coords) -------------------------------------------
     airports: dict[str, dict] = {}

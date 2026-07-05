@@ -13,7 +13,7 @@ import pytest
 import responses as responses_lib
 from _frontier import BFF_ENDPOINT, SUBSCRIPTION_KEY
 
-from flights.core.crawl import _SCHEMA
+from flights.core import storage
 from flights.providers.frontier.client import FrontierProvider
 
 
@@ -22,8 +22,7 @@ def schema_db(tmp_path):
     """Path to a fresh SQLite DB built from the crawler's canonical schema."""
     db = tmp_path / "flights.db"
     conn = sqlite3.connect(db)
-    conn.executescript(_SCHEMA)
-    conn.commit()
+    storage.init_db(conn)
     conn.close()
     return str(db)
 

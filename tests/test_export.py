@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from flights.core.crawl import _SCHEMA
+from flights.core import storage
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_DATA = REPO_ROOT / "web" / "build_data.py"
@@ -22,7 +22,7 @@ BUILD_DATA = REPO_ROOT / "web" / "build_data.py"
 def _seed(db_path):
     conn = sqlite3.connect(db_path)
     try:
-        conn.executescript(_SCHEMA)
+        storage.init_db(conn)
         conn.executemany(
             "INSERT INTO airports "
             "(code, city, full_name, country_code, country_name, state_code, lat, long) "
