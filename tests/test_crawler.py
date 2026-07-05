@@ -3,7 +3,7 @@
 import datetime as _dt
 import sqlite3
 
-from flights.core.crawl import Crawler
+from flights.core.crawl import Crawler, CrawlStore
 from flights.core.errors import MarketNotFoundError
 from flights.core.models import Airport, DayFare, Flight
 
@@ -76,7 +76,7 @@ def _run(provider, db, **kw):
     try:
         crawler.crawl("2025-01-01", "2025-01-07", **kw)
     finally:
-        crawler._conn.close()
+        crawler.close()
 
 
 def test_crawl_populates_all_tables(tmp_path):
@@ -143,7 +143,7 @@ def test_windows_helper_chunks_by_window_days(tmp_path):
     try:
         windows = crawler._windows(_dt.date(2025, 1, 1), _dt.date(2025, 1, 20))
     finally:
-        crawler._conn.close()
+        crawler.close()
     assert windows == [_dt.date(2025, 1, 1), _dt.date(2025, 1, 8), _dt.date(2025, 1, 15)]
 
 
@@ -160,3 +160,46 @@ def test_stored_timestamps_are_utc_aware(tmp_path):
     parsed = _dt.datetime.fromisoformat(scraped_at)
     assert parsed.tzinfo is not None
     assert parsed.utcoffset() == _dt.timedelta(0)
+
+
+def test_crawler_emits_progress_via_logging(tmp_path, caplog):
+    db = str(tmp_path / "c.db")
+    with caplog.at_level("INFO", logger="flights.core.crawl"):
+        _run(FakeProvider(), db, probe_nonstop=True)
+
+    messages = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Discovering US route network" in messages
+    assert "Dataset:" in messages
+
+
+def test_crawler_is_quiet_on_stdout_by_default(tmp_path, capsys):
+    # As a library, the crawler must not write to stdout on its own; progress is
+    # emitted through logging and only surfaced when the caller adds a handler.
+    db = str(tmp_path / "c.db")
+    _run(FakeProvider(), db, probe_nonstop=True)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_crawlstore_persists_and_reports_in_isolation(tmp_path):
+    # The repository concern works standalone, with no Crawler/orchestration.
+    store = CrawlStore(str(tmp_path / "s.db"))
+    try:
+        fare = DayFare("fake", "DEN", "LAS", "2025-01-01", standard_fare=99.0, saver_fare=49.0)
+        stored = store.record_window_result(
+            "fake",
+            "DEN",
+            "LAS",
+            _dt.date(2025, 1, 1),
+            _dt.date(2025, 1, 7),
+            "ok",
+            [fare],
+            "2025-01-01T00:00:00+00:00",
+        )
+        assert stored == 1
+        assert store.done_windows("fake") == {("DEN", "LAS", "2025-01-01"): "2025-01-07"}
+
+        rows, routes, nomarket, nonstop_yes, nonstop_no = store.report_counts("fake")
+        assert (rows, routes, nomarket) == (1, 1, 0)
+    finally:
+        store.close()

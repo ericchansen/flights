@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as _dt
+import logging
 import sqlite3
 import sys
 from dataclasses import asdict, fields
@@ -39,6 +40,22 @@ from .core import (
 def _log(*args) -> None:
     """Write human-facing progress/status to stderr so stdout stays pure CSV."""
     print(*args, file=sys.stderr, flush=True)
+
+
+def _configure_crawl_logging() -> None:
+    """Surface the crawler's ``logging`` progress on stdout.
+
+    The crawler logs progress through ``logging`` (so it stays quiet when used
+    as a library). The ``crawl`` command opts in to seeing it, emitting plain
+    messages on stdout to match the tool's historical output.
+    """
+    pkg_logger = logging.getLogger("flights")
+    pkg_logger.setLevel(logging.INFO)
+    if not any(getattr(h, "_flights_cli", False) for h in pkg_logger.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        handler._flights_cli = True  # type: ignore[attr-defined]
+        pkg_logger.addHandler(handler)
 
 
 def _write_csv(path: str, rows: list, header: list[str]) -> None:
@@ -183,6 +200,7 @@ def cmd_flights(provider: BaseProvider, args) -> None:
 
 
 def cmd_crawl(provider: BaseProvider, args) -> None:
+    _configure_crawl_logging()
     begin = args.begin or _dt.date.today().isoformat()
     end = args.end or (_d(begin) + _dt.timedelta(days=args.days - 1)).isoformat()
     origins = _split(args.origins) if args.origins else None

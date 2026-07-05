@@ -91,7 +91,7 @@ def test_crawler_read_helpers_match_schema(tmp_path):
         assert crawler._done_windows() == {("DEN", "LAS", "2025-01-01"): "2025-01-07"}
         crawler._report()  # exercises the report SELECTs; must not raise
     finally:
-        crawler._conn.close()
+        crawler.close()
 
 
 def test_explore_dataset_runs_against_schema(tmp_path):
