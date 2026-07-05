@@ -217,7 +217,7 @@ class Crawler:
     def _store_nonstop(self, origin: str, dest: str, nonstop) -> None:
         if nonstop is None:
             return  # leave NULL (unknown) so a later run re-probes it
-        now = _dt.datetime.utcnow().isoformat()
+        now = _dt.datetime.now(_dt.UTC).isoformat()
         prov = self.provider.name
         with self._db_lock:
             self._conn.execute(
@@ -292,7 +292,7 @@ class Crawler:
     def _store(
         self, origin: str, dest: str, begin: _dt.date, end: _dt.date, status: str, fares: list
     ) -> None:
-        now = _dt.datetime.utcnow().isoformat()
+        now = _dt.datetime.now(_dt.UTC).isoformat()
         prov = self.provider.name
         with self._db_lock:
             if status == "ok":

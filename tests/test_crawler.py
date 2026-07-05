@@ -145,3 +145,18 @@ def test_windows_helper_chunks_by_window_days(tmp_path):
     finally:
         crawler._conn.close()
     assert windows == [_dt.date(2025, 1, 1), _dt.date(2025, 1, 8), _dt.date(2025, 1, 15)]
+
+
+def test_stored_timestamps_are_utc_aware(tmp_path):
+    db = str(tmp_path / "c.db")
+    _run(FakeProvider(), db, probe_nonstop=False)
+
+    conn = sqlite3.connect(db)
+    try:
+        scraped_at = conn.execute("SELECT scraped_at FROM lowfares").fetchone()[0]
+    finally:
+        conn.close()
+
+    parsed = _dt.datetime.fromisoformat(scraped_at)
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == _dt.timedelta(0)
